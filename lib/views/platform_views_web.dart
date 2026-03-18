@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'content_view_web.dart';
+import 'home_view.dart';
 import 'sign_in_view_web.dart';
 
-/// Web platform — returns iframe-based views instead of WebView.
+/// Web platform views.
 Widget buildSignInView() => const SignInViewWeb();
-Widget buildContentView() => const ContentViewWeb();
+Widget buildContentView() => const HomeView();

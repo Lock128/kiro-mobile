@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier, kIsWeb;
 import 'package:webview_flutter/webview_flutter.dart';
@@ -80,21 +81,43 @@ class AuthManager extends ChangeNotifier {
     }
   }
 
-  /// Reads auth credentials from browser cookies (web platform only).
+  /// Handles web sign-in with explicitly provided tokens.
+  ///
+  /// Called when the user provides their bearer token (and optionally CSRF
+  /// token) after completing the OAuth flow in a popup window.
+  Future<void> handleWebSignInWithTokens({
+    required String bearerToken,
+    String? csrfToken,
+  }) async {
+    try {
+      final credentials = AuthCredentials(
+        token: bearerToken,
+        cookies: const {},
+        bearerToken: bearerToken,
+        csrfToken: csrfToken,
+      );
+
+      if (!credentials.isValid) {
+        _setState(AuthState.error);
+        return;
+      }
+
+      await _credentialStore.save(credentials);
+      _credentials = credentials;
+      _setState(AuthState.authenticated);
+    } catch (_) {
+      _setState(AuthState.error);
+    }
+  }
+
+  /// Reads auth credentials from browser cookies and localStorage (web platform only).
   Future<AuthCredentials?> _extractWebCredentials() async {
     try {
-      // On web, we use dart:js_interop or the web package to read
-      // document.cookie. This is called from the web sign-in view
-      // which already verified the cookie exists.
-      // The actual cookie reading happens in the web view; here we
-      // just need to parse what's available.
-      //
-      // Since this runs on web, we import web package conditionally.
-      // For now, we rely on the web sign-in view passing cookie data
-      // or we read from the credential store if already saved.
-      //
-      // Fallback: mark as authenticated since the web view confirmed
-      // cookies are present.
+      // On web, after the OAuth popup completes, the user is authenticated
+      // on app.kiro.dev via cookies. Since our Flutter app runs on a
+      // different origin, we can't directly access those cookies or tokens.
+      // We mark as authenticated and the web content view will redirect
+      // to app.kiro.dev where the session is active.
       return AuthCredentials(
         token: 'web-session',
         cookies: const {},
@@ -128,7 +151,9 @@ class AuthManager extends ChangeNotifier {
 
   /// Reads cookies and tokens from the WebView [controller].
   ///
-  /// Returns an [AuthCredentials] instance or `null` if extraction fails.
+  /// After the OAuth flow completes, the Kiro web app sets cookies including
+  /// `AccessToken` (used as the Bearer token for API calls) and a CSRF token.
+  /// We call the GetToken endpoint from within the WebView to obtain them.
   Future<AuthCredentials?> extractCredentials(
       WebViewController controller) async {
     try {
@@ -140,27 +165,103 @@ class AuthManager extends ChangeNotifier {
       final cookieString = cookiesResult.toString().replaceAll('"', '');
       final cookies = _parseCookies(cookieString);
 
-      // Extract the auth token from cookies — look for common token cookie
-      // names used by the Kiro sign-in flow.
-      final token = cookies['kiro_token'] ??
-          cookies['session'] ??
-          cookies['auth_token'] ??
-          '';
+      // The AccessToken cookie is the bearer token for API calls.
+      final accessToken = cookies['AccessToken'] ?? '';
+      // SessionToken is used as the primary credential identifier.
+      final sessionToken = cookies['SessionToken'] ?? '';
+      final token = sessionToken.isNotEmpty ? sessionToken : accessToken;
 
       if (token.isEmpty) return null;
 
-      // Parse expiry from cookie if available, otherwise default to null.
-      final expiryStr = cookies['token_expiry'];
-      final expiresAt =
-          expiryStr != null ? DateTime.tryParse(expiryStr) : null;
+      // Call GetToken from within the WebView (same-origin, cookies sent
+      // automatically). The endpoint returns CBOR but we can ask for JSON
+      // or parse the response as text in JS.
+      String? bearerToken;
+      String? csrfToken;
+      try {
+        final tokenResult = await controller.runJavaScriptReturningResult(
+          '''
+          (async function() {
+            try {
+              var resp = await fetch(
+                '/service/KiroWebPortalService/operation/GetToken',
+                {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: {
+                    'accept': 'application/json',
+                    'content-type': 'application/json'
+                  },
+                  body: JSON.stringify({})
+                }
+              );
+              var text = await resp.text();
+              try {
+                var data = JSON.parse(text);
+                return JSON.stringify({
+                  accessToken: data.accessToken || '',
+                  csrfToken: data.csrfToken || ''
+                });
+              } catch(e) {
+                // CBOR response — extract accessToken from raw bytes.
+                // The token starts with 'aoa' and is a long string.
+                var match = text.match(/aoa[A-Za-z0-9+\\/=:]+/);
+                return JSON.stringify({
+                  accessToken: match ? match[0] : '',
+                  csrfToken: ''
+                });
+              }
+            } catch(e) {
+              return JSON.stringify({accessToken: '', csrfToken: ''});
+            }
+          })()
+          ''',
+        );
+        final parsed = tokenResult.toString().replaceAll('"', '');
+        // The JS returns a JSON string — but it's been stringified twice
+        // by runJavaScriptReturningResult. Try to parse it.
+        try {
+          // Remove outer quotes if present
+          var jsonStr = parsed;
+          if (jsonStr.startsWith('{')) {
+            final map = Map<String, dynamic>.from(
+              _parseSimpleJson(jsonStr),
+            );
+            final at = map['accessToken'] as String? ?? '';
+            final ct = map['csrfToken'] as String? ?? '';
+            if (at.isNotEmpty) bearerToken = at;
+            if (ct.isNotEmpty) csrfToken = ct;
+          }
+        } catch (_) {
+          // Fallback: use the AccessToken cookie directly.
+        }
+      } catch (_) {
+        // GetToken call may fail — non-fatal.
+      }
+
+      // Fallback: use AccessToken cookie as bearer token.
+      bearerToken ??= accessToken.isNotEmpty ? accessToken : null;
 
       return AuthCredentials(
         token: token,
-        expiresAt: expiresAt,
         cookies: cookies,
+        bearerToken: bearerToken,
+        csrfToken: csrfToken,
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Simple JSON parser for flat objects like {key: value, ...}.
+  Map<String, dynamic> _parseSimpleJson(String json) {
+    // Use dart:convert for proper parsing.
+    try {
+      return Map<String, dynamic>.from(
+        (const JsonDecoder().convert(json)) as Map,
+      );
+    } catch (_) {
+      return {};
     }
   }
 

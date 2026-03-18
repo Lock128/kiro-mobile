@@ -4,6 +4,8 @@ class AuthCredentials {
     required this.token,
     this.expiresAt,
     this.cookies = const {},
+    this.csrfToken,
+    this.bearerToken,
   });
 
   /// Primary auth token (JWT or session token).
@@ -14,6 +16,12 @@ class AuthCredentials {
 
   /// Cookies extracted from WebView after sign-in.
   final Map<String, String> cookies;
+
+  /// CSRF token for API requests.
+  final String? csrfToken;
+
+  /// Bearer token for API authorization header.
+  final String? bearerToken;
 
   /// Whether the credentials have expired.
   bool get isExpired =>
@@ -27,6 +35,8 @@ class AuthCredentials {
         'token': token,
         'expiresAt': expiresAt?.toIso8601String(),
         'cookies': cookies,
+        'csrfToken': csrfToken,
+        'bearerToken': bearerToken,
       };
 
   /// Deserializes credentials from a JSON map.
@@ -37,5 +47,7 @@ class AuthCredentials {
             ? DateTime.parse(json['expiresAt'] as String)
             : null,
         cookies: Map<String, String>.from(json['cookies'] as Map? ?? {}),
+        csrfToken: json['csrfToken'] as String?,
+        bearerToken: json['bearerToken'] as String?,
       );
 }

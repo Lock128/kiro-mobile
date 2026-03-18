@@ -62,15 +62,27 @@ class _SignInViewState extends State<SignInView> {
           onNavigationRequest: (request) {
             _handleNavigation(request.url);
 
-            // Block navigation to external domains to prevent new tabs
-            // from breaking the auth flow (Requirement 8.6).
+            // Allow navigation to the Kiro domain and OAuth providers.
             final uri = Uri.tryParse(request.url);
-            final signInUri = Uri.parse(SignInView.signInUrl);
-            if (uri != null && uri.host.isNotEmpty && uri.host != signInUri.host) {
-              return NavigationDecision.prevent;
+            if (uri == null) return NavigationDecision.navigate;
+
+            final allowedHosts = {
+              'app.kiro.dev',
+              'oidc.us-east-1.amazonaws.com',
+              'view.awsapps.com',
+              'us-east-1.signin.aws',
+              'signin.aws',
+            };
+
+            if (uri.host.isEmpty ||
+                allowedHosts.contains(uri.host) ||
+                uri.host.endsWith('.signin.aws') ||
+                uri.host.endsWith('.awsapps.com') ||
+                uri.host.endsWith('.amazonaws.com')) {
+              return NavigationDecision.navigate;
             }
 
-            return NavigationDecision.navigate;
+            return NavigationDecision.prevent;
           },
         ),
       )

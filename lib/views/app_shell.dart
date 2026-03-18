@@ -1,15 +1,12 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/auth_state.dart';
 import '../services/auth_manager.dart';
 import '../services/connectivity_monitor.dart';
-import 'content_view.dart';
 import 'error_view.dart';
-import 'sign_in_view.dart';
 import 'platform_views_stub.dart'
     if (dart.library.js_interop) 'platform_views_web.dart' as platform;
 
@@ -85,9 +82,9 @@ class _AppShellState extends State<AppShell> {
           body: Center(child: CircularProgressIndicator()),
         );
       case AuthState.unauthenticated:
-        return kIsWeb ? platform.buildSignInView() : const SignInView();
+        return platform.buildSignInView();
       case AuthState.authenticated:
-        return kIsWeb ? platform.buildContentView() : const ContentView();
+        return platform.buildContentView();
       case AuthState.error:
         return ErrorView(
           message: 'Something went wrong. Please try again.',

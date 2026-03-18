@@ -50,6 +50,9 @@ class FakeAuthManager extends ChangeNotifier implements AuthManager {
   Future<void> signOut() async {}
   @override
   Future<void> handleAuthError() async {}
+
+  @override
+  Future<void> handleWebSignInComplete() async {}
 }
 
 // ---------------------------------------------------------------------------
