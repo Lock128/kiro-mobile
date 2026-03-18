@@ -45,6 +45,7 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
   glados: ^1.1.1
   webview_flutter_platform_interface: ^2.10.0
   flutter_secure_storage_platform_interface: ^1.1.2
@@ -90,3 +91,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  ios: true
+  android: true
+  image_path: "assets/kiro_ghost.jpg"
+  remove_alpha_ios: true

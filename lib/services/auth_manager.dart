@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier, kIsWeb;
+
+import 'debug_log.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/auth_credentials.dart';
@@ -41,12 +43,14 @@ class AuthManager extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final available = await _credentialStore.isAvailable;
+      DebugLog.log('initialize: credentialStore.isAvailable=$available');
       if (!available) {
         _setState(AuthState.error);
         return;
       }
 
       final stored = await _credentialStore.load();
+      DebugLog.log('initialize: stored=${stored != null}, isValid=${stored?.isValid}');
       if (stored != null && stored.isValid) {
         _credentials = stored;
         _setState(AuthState.authenticated);
@@ -57,7 +61,8 @@ class AuthManager extends ChangeNotifier {
         }
         _setState(AuthState.unauthenticated);
       }
-    } catch (_) {
+    } catch (e) {
+      DebugLog.log('initialize: caught exception: $e');
       _credentials = null;
       _setState(AuthState.error);
     }
@@ -136,7 +141,9 @@ class AuthManager extends ChangeNotifier {
   Future<void> handleSignInComplete(WebViewController controller) async {
     try {
       final extracted = await extractCredentials(controller);
+      DebugLog.log('[AuthManager] handleSignInComplete: extracted=${extracted != null}, isValid=${extracted?.isValid}');
       if (extracted == null || !extracted.isValid) {
+        DebugLog.log('[AuthManager] handleSignInComplete: transitioning to error state');
         _setState(AuthState.error);
         return;
       }
@@ -144,41 +151,28 @@ class AuthManager extends ChangeNotifier {
       await _credentialStore.save(extracted);
       _credentials = extracted;
       _setState(AuthState.authenticated);
-    } catch (_) {
+    } catch (e) {
+      DebugLog.log('handleSignInComplete: caught exception: $e');
       _setState(AuthState.error);
     }
   }
 
   /// Reads cookies and tokens from the WebView [controller].
   ///
-  /// After the OAuth flow completes, the Kiro web app sets cookies including
-  /// `AccessToken` (used as the Bearer token for API calls) and a CSRF token.
-  /// We call the GetToken endpoint from within the WebView to obtain them.
+  /// Strategy: first call the GetToken endpoint from within the WebView
+  /// (same-origin, so cookies are sent automatically even if HttpOnly).
+  /// If that succeeds we have everything we need. Only fall back to
+  /// reading `document.cookie` via JS if GetToken fails.
   Future<AuthCredentials?> extractCredentials(
       WebViewController controller) async {
     try {
-      // Retrieve cookies set by the Kiro sign-in page via JavaScript.
-      final cookiesResult = await controller.runJavaScriptReturningResult(
-        'document.cookie',
-      );
-
-      final cookieString = cookiesResult.toString().replaceAll('"', '');
-      final cookies = _parseCookies(cookieString);
-
-      // The AccessToken cookie is the bearer token for API calls.
-      final accessToken = cookies['AccessToken'] ?? '';
-      // SessionToken is used as the primary credential identifier.
-      final sessionToken = cookies['SessionToken'] ?? '';
-      final token = sessionToken.isNotEmpty ? sessionToken : accessToken;
-
-      if (token.isEmpty) return null;
-
-      // Call GetToken from within the WebView (same-origin, cookies sent
-      // automatically). The endpoint returns CBOR but we can ask for JSON
-      // or parse the response as text in JS.
+      // ── 1. Try GetToken endpoint (primary path) ──────────────
+      // This works on iOS even when cookies are HttpOnly because the
+      // fetch runs inside the WebView with same-origin credentials.
       String? bearerToken;
       String? csrfToken;
       try {
+        DebugLog.log('extractCredentials: calling GetToken endpoint');
         final tokenResult = await controller.runJavaScriptReturningResult(
           '''
           (async function() {
@@ -195,52 +189,80 @@ class AuthManager extends ChangeNotifier {
                   body: JSON.stringify({})
                 }
               );
+              var status = resp.status;
               var text = await resp.text();
               try {
                 var data = JSON.parse(text);
                 return JSON.stringify({
+                  status: status,
                   accessToken: data.accessToken || '',
                   csrfToken: data.csrfToken || ''
                 });
               } catch(e) {
-                // CBOR response — extract accessToken from raw bytes.
-                // The token starts with 'aoa' and is a long string.
-                var match = text.match(/aoa[A-Za-z0-9+\\/=:]+/);
+                var match = text.match(/aoa[A-Za-z0-9+\\\\/=:]+/);
                 return JSON.stringify({
+                  status: status,
                   accessToken: match ? match[0] : '',
-                  csrfToken: ''
+                  csrfToken: '',
+                  parseError: e.toString()
                 });
               }
             } catch(e) {
-              return JSON.stringify({accessToken: '', csrfToken: ''});
+              return JSON.stringify({status: 0, accessToken: '', csrfToken: '', fetchError: e.toString()});
             }
           })()
           ''',
         );
         final parsed = tokenResult.toString().replaceAll('"', '');
-        // The JS returns a JSON string — but it's been stringified twice
-        // by runJavaScriptReturningResult. Try to parse it.
+        DebugLog.log('extractCredentials: GetToken raw result: $parsed');
         try {
-          // Remove outer quotes if present
-          var jsonStr = parsed;
-          if (jsonStr.startsWith('{')) {
-            final map = Map<String, dynamic>.from(
-              _parseSimpleJson(jsonStr),
-            );
+          if (parsed.startsWith('{')) {
+            final map = Map<String, dynamic>.from(_parseSimpleJson(parsed));
             final at = map['accessToken'] as String? ?? '';
             final ct = map['csrfToken'] as String? ?? '';
             if (at.isNotEmpty) bearerToken = at;
             if (ct.isNotEmpty) csrfToken = ct;
+            DebugLog.log('extractCredentials: GetToken status=${map['status']}, '
+                'accessToken=${at.isNotEmpty}, csrfToken=${ct.isNotEmpty}');
           }
-        } catch (_) {
-          // Fallback: use the AccessToken cookie directly.
+        } catch (e) {
+          DebugLog.log('extractCredentials: GetToken parse error: $e');
         }
-      } catch (_) {
-        // GetToken call may fail — non-fatal.
+      } catch (e) {
+        DebugLog.log('extractCredentials: GetToken call failed: $e');
       }
 
-      // Fallback: use AccessToken cookie as bearer token.
-      bearerToken ??= accessToken.isNotEmpty ? accessToken : null;
+      // ── 2. Read cookies via JS (may be empty on iOS for HttpOnly) ──
+      final cookiesResult = await controller.runJavaScriptReturningResult(
+        'document.cookie',
+      );
+      final cookieString = cookiesResult.toString().replaceAll('"', '');
+      DebugLog.log('extractCredentials: document.cookie = "$cookieString"');
+      final cookies = _parseCookies(cookieString);
+      DebugLog.log('extractCredentials: parsed cookie keys: ${cookies.keys.toList()}');
+
+      final accessTokenCookie = cookies['AccessToken'] ?? '';
+      final sessionToken = cookies['SessionToken'] ?? '';
+
+      // ── 3. Determine the primary token ──────────────────────
+      // Prefer the bearer token from GetToken, then SessionToken cookie,
+      // then AccessToken cookie.
+      final token = bearerToken ??
+          (sessionToken.isNotEmpty ? sessionToken : null) ??
+          (accessTokenCookie.isNotEmpty ? accessTokenCookie : null) ??
+          '';
+
+      DebugLog.log('extractCredentials: final token=${token.isNotEmpty}, '
+          'bearerToken=${bearerToken != null}, csrfToken=${csrfToken != null}');
+
+      if (token.isEmpty) {
+        DebugLog.log('extractCredentials: no usable token found — '
+            'both GetToken and cookie extraction failed');
+        return null;
+      }
+
+      // Use bearer token from GetToken, or fall back to AccessToken cookie.
+      bearerToken ??= accessTokenCookie.isNotEmpty ? accessTokenCookie : null;
 
       return AuthCredentials(
         token: token,
@@ -248,7 +270,8 @@ class AuthManager extends ChangeNotifier {
         bearerToken: bearerToken,
         csrfToken: csrfToken,
       );
-    } catch (_) {
+    } catch (e) {
+      DebugLog.log('extractCredentials: caught exception: $e');
       return null;
     }
   }
