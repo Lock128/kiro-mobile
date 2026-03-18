@@ -24,6 +24,7 @@ class _SignInViewState extends State<SignInView> {
   late final WebViewController _controller;
   bool _isLoading = true;
   String? _errorMessage;
+  bool _hasNavigatedPastSignIn = false;
 
   @override
   void initState() {
@@ -42,10 +43,14 @@ class _SignInViewState extends State<SignInView> {
               _errorMessage = null;
             });
           },
-          onPageFinished: (_) {
+          onPageFinished: (url) {
             setState(() {
               _isLoading = false;
             });
+            // Also check for sign-in completion here — SPA route changes
+            // and JS-based redirects may not trigger onNavigationRequest
+            // on iOS, but onPageFinished fires reliably.
+            _handleNavigation(url);
           },
           onWebResourceError: (error) {
             // Only treat main frame errors as page-level failures.
@@ -89,6 +94,8 @@ class _SignInViewState extends State<SignInView> {
       ..loadRequest(Uri.parse(SignInView.signInUrl));
   }
 
+  bool _signInCompleteTriggered = false;
+
   /// Detects when the WebView navigates away from the sign-in page,
   /// indicating that sign-in is complete.
   void _handleNavigation(String url) {
@@ -103,9 +110,30 @@ class _SignInViewState extends State<SignInView> {
         uri.host == signInUri.host && uri.path == signInUri.path;
 
     if (!isSignInPage && uri.host == signInUri.host) {
-      final authManager = context.read<AuthManager>();
-      authManager.handleSignInComplete(_controller);
+      if (!_hasNavigatedPastSignIn) {
+        setState(() => _hasNavigatedPastSignIn = true);
+      }
+      // Only trigger once — both onNavigationRequest and onPageFinished
+      // may call this for the same navigation.
+      if (!_signInCompleteTriggered) {
+        _signInCompleteTriggered = true;
+        final authManager = context.read<AuthManager>();
+        authManager.handleSignInComplete(_controller);
+      }
     }
+  }
+
+  void _forceReAuth() {
+    setState(() {
+      _hasNavigatedPastSignIn = false;
+      _signInCompleteTriggered = false;
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    // Clear cookies so the WebView starts a fresh sign-in.
+    final authManager = context.read<AuthManager>();
+    authManager.signOut();
+    _controller.loadRequest(Uri.parse(SignInView.signInUrl));
   }
 
   void _retry() {
@@ -122,9 +150,8 @@ class _SignInViewState extends State<SignInView> {
     // during the sign-in flow (Requirement 8.6).
     return PopScope(
       canPop: !kIsWeb,
-      child: Scaffold(
-        body: Stack(
-          children: [
+      child: Stack(
+        children: [
             // WebView is always in the tree so it can load in the background.
             if (_errorMessage == null) WebViewWidget(controller: _controller),
 
@@ -157,6 +184,28 @@ class _SignInViewState extends State<SignInView> {
             // Loading indicator
             if (_isLoading && _errorMessage == null)
               const Center(child: CircularProgressIndicator()),
+
+            // Floating re-auth button when stuck on the Kiro web page
+            if (_hasNavigatedPastSignIn && !_isLoading && _errorMessage == null)
+              Positioned(
+                bottom: 32,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: SafeArea(
+                    child: ElevatedButton.icon(
+                      onPressed: _forceReAuth,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Sign in again'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.surface,
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                        elevation: 4,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

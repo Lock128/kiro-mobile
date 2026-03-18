@@ -6,96 +6,17 @@ import '../services/kiro_api.dart';
 import 'session_detail_view.dart';
 import 'task_detail_view.dart';
 
-/// Native Flutter home screen with Create, Chats, and Tasks tabs.
-class HomeView extends StatefulWidget {
-  const HomeView({super.key});
-
-  @override
-  State<HomeView> createState() => _HomeViewState();
-}
-
-class _HomeViewState extends State<HomeView> {
-  int _currentIndex = 0;
-  KiroApi? _api;
-
-  @override
-  void initState() {
-    super.initState();
-    final credentials = context.read<AuthManager>().credentials;
-    if (credentials != null) {
-      _api = KiroApi(credentials: credentials);
-    }
-  }
-
-  @override
-  void dispose() {
-    _api?.dispose();
-    super.dispose();
-  }
-
-  void _signOut() {
-    context.read<AuthManager>().signOut();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Kiro'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: _signOut,
-          ),
-        ],
-      ),
-      body: _api == null
-          ? const Center(child: Text('No credentials available.'))
-          : IndexedStack(
-              index: _currentIndex,
-              children: [
-                _CreateTab(api: _api!),
-                _ChatsTab(api: _api!),
-                _TasksTab(api: _api!),
-              ],
-            ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.add_circle_outline),
-            selectedIcon: Icon(Icons.add_circle),
-            label: 'Create',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline),
-            selectedIcon: Icon(Icons.chat_bubble),
-            label: 'Chats',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.task_outlined),
-            selectedIcon: Icon(Icons.task),
-            label: 'Tasks',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ─── Create Tab ──────────────────────────────────────────────────────────────
 
-class _CreateTab extends StatefulWidget {
-  const _CreateTab({required this.api});
+class CreateTab extends StatefulWidget {
+  const CreateTab({super.key, required this.api});
   final KiroApi api;
 
   @override
-  State<_CreateTab> createState() => _CreateTabState();
+  State<CreateTab> createState() => _CreateTabState();
 }
 
-class _CreateTabState extends State<_CreateTab> {
+class _CreateTabState extends State<CreateTab> {
   final _promptController = TextEditingController();
   List<ConnectionResource> _repos = [];
   final List<ConnectionResource> _selectedRepos = [];
@@ -390,15 +311,15 @@ class _RepoDropdown extends StatelessWidget {
 
 // ─── Chats Tab ───────────────────────────────────────────────────────────────
 
-class _ChatsTab extends StatefulWidget {
-  const _ChatsTab({required this.api});
+class ChatsTab extends StatefulWidget {
+  const ChatsTab({super.key, required this.api});
   final KiroApi api;
 
   @override
-  State<_ChatsTab> createState() => _ChatsTabState();
+  State<ChatsTab> createState() => _ChatsTabState();
 }
 
-class _ChatsTabState extends State<_ChatsTab> {
+class _ChatsTabState extends State<ChatsTab> {
   late Future<List<ChatSession>> _future;
 
   @override
@@ -600,15 +521,15 @@ class _TableCell extends StatelessWidget {
 
 // ─── Tasks Tab ───────────────────────────────────────────────────────────────
 
-class _TasksTab extends StatefulWidget {
-  const _TasksTab({required this.api});
+class TasksTab extends StatefulWidget {
+  const TasksTab({super.key, required this.api});
   final KiroApi api;
 
   @override
-  State<_TasksTab> createState() => _TasksTabState();
+  State<TasksTab> createState() => _TasksTabState();
 }
 
-class _TasksTabState extends State<_TasksTab> {
+class _TasksTabState extends State<TasksTab> {
   late Future<_TasksData> _future;
 
   @override

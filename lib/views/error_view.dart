@@ -11,6 +11,7 @@ class ErrorView extends StatelessWidget {
     super.key,
     required this.message,
     this.onRetry,
+    this.onSignInAgain,
   });
 
   /// The error message shown to the user.
@@ -18,6 +19,11 @@ class ErrorView extends StatelessWidget {
 
   /// Called when the user taps the retry button.
   /// If `null`, the retry button is hidden.
+  final VoidCallback? onRetry;
+
+  /// Called when the user taps "Sign in again".
+  /// If `null`, the button is hidden.
+  final VoidCallback? onSignInAgain;
   final VoidCallback? onRetry;
 
   void _showDebugLog(BuildContext context) {
@@ -84,14 +90,13 @@ class ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
                 Icons.error_outline,
                 size: 48,
                 color: Colors.red,
@@ -110,11 +115,19 @@ class ErrorView extends StatelessWidget {
                   label: const Text('Retry'),
                 ),
               ],
+              if (onSignInAgain != null) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: onSignInAgain,
+                  icon: const Icon(Icons.login, size: 18),
+                  label: const Text('Sign in again'),
+                ),
+              ],
               const SizedBox(height: 24),
               TextButton.icon(
                 onPressed: () => _showDebugLog(context),
                 icon: const Icon(Icons.bug_report, size: 18),
-                label: const Text('Show Debug Log'),
+              label: const Text('Show Debug Log'),
               ),
             ],
           ),

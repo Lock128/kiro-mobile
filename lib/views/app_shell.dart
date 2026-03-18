@@ -6,14 +6,14 @@ import 'package:provider/provider.dart';
 import '../models/auth_state.dart';
 import '../services/auth_manager.dart';
 import '../services/connectivity_monitor.dart';
+import '../services/kiro_api.dart';
 import 'error_view.dart';
+import 'home_view.dart';
 import 'platform_views_stub.dart'
     if (dart.library.js_interop) 'platform_views_web.dart' as platform;
 
-/// Root widget that listens to [AuthManager] state changes and renders
-/// the appropriate view ([SignInView], [ContentView], [ErrorView], or a
-/// loading indicator). Also integrates [ConnectivityMonitor] to show an
-/// offline overlay with a retry button when the device loses connectivity.
+/// Root widget that always shows a bottom tab bar (Create, Chats, Tasks)
+/// and swaps the body content based on [AuthManager] state.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -24,6 +24,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   StreamSubscription<bool>? _connectivitySubscription;
   bool _isOffline = false;
+  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -53,10 +54,8 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _isOffline = false;
       });
-      // Re-trigger the current auth operation so the app resumes.
       if (mounted) {
-        final authManager = context.read<AuthManager>();
-        authManager.initialize();
+        context.read<AuthManager>().initialize();
       }
     }
   }
@@ -67,7 +66,43 @@ class _AppShellState extends State<AppShell> {
       children: [
         Consumer<AuthManager>(
           builder: (context, authManager, _) {
-            return _buildForState(authManager);
+            return Scaffold(
+              appBar: authManager.state == AuthState.authenticated
+                  ? AppBar(
+                      title: const Text('Kiro'),
+                      actions: [
+                        IconButton(
+                          icon: const Icon(Icons.logout),
+                          tooltip: 'Sign out',
+                          onPressed: () => authManager.signOut(),
+                        ),
+                      ],
+                    )
+                  : null,
+              body: _buildBody(authManager),
+              bottomNavigationBar: NavigationBar(
+                selectedIndex: _currentIndex,
+                onDestinationSelected: (i) =>
+                    setState(() => _currentIndex = i),
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(Icons.add_circle_outline),
+                    selectedIcon: Icon(Icons.add_circle),
+                    label: 'Create',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.chat_bubble_outline),
+                    selectedIcon: Icon(Icons.chat_bubble),
+                    label: 'Chats',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.task_outlined),
+                    selectedIcon: Icon(Icons.task),
+                    label: 'Tasks',
+                  ),
+                ],
+              ),
+            );
           },
         ),
         if (_isOffline) _buildOfflineOverlay(),
@@ -75,20 +110,22 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  Widget _buildForState(AuthManager authManager) {
+  Widget _buildBody(AuthManager authManager) {
     switch (authManager.state) {
       case AuthState.unknown:
-        return const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
-        );
+        return const Center(child: CircularProgressIndicator());
       case AuthState.unauthenticated:
         return platform.buildSignInView();
       case AuthState.authenticated:
-        return platform.buildContentView();
+        return _AuthenticatedBody(
+          currentIndex: _currentIndex,
+          authManager: authManager,
+        );
       case AuthState.error:
         return ErrorView(
           message: 'Something went wrong. Please try again.',
           onRetry: () => authManager.initialize(),
+          onSignInAgain: () => authManager.signOut(),
         );
     }
   }
@@ -109,7 +146,8 @@ class _AppShellState extends State<AppShell> {
                   const SizedBox(height: 16),
                   const Text(
                     'No internet connection',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -128,6 +166,55 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The authenticated tab body. Manages [KiroApi] lifecycle and renders
+/// the correct tab content via [IndexedStack].
+class _AuthenticatedBody extends StatefulWidget {
+  const _AuthenticatedBody({
+    required this.currentIndex,
+    required this.authManager,
+  });
+
+  final int currentIndex;
+  final AuthManager authManager;
+
+  @override
+  State<_AuthenticatedBody> createState() => _AuthenticatedBodyState();
+}
+
+class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
+  KiroApi? _api;
+
+  @override
+  void initState() {
+    super.initState();
+    final credentials = widget.authManager.credentials;
+    if (credentials != null) {
+      _api = KiroApi(credentials: credentials);
+    }
+  }
+
+  @override
+  void dispose() {
+    _api?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_api == null) {
+      return const Center(child: Text('No credentials available.'));
+    }
+    return IndexedStack(
+      index: widget.currentIndex,
+      children: [
+        CreateTab(api: _api!),
+        ChatsTab(api: _api!),
+        TasksTab(api: _api!),
+      ],
     );
   }
 }
