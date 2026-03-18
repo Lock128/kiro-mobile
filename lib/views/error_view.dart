@@ -24,7 +24,6 @@ class ErrorView extends StatelessWidget {
   /// Called when the user taps "Sign in again".
   /// If `null`, the button is hidden.
   final VoidCallback? onSignInAgain;
-  final VoidCallback? onRetry;
 
   void _showDebugLog(BuildContext context) {
     final log = DebugLog.dump();
@@ -96,41 +95,36 @@ class ErrorView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-                Icons.error_outline,
-                size: 48,
-                color: Colors.red,
-              ),
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            if (onRetry != null) ...[
               const SizedBox(height: 16),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              if (onRetry != null) ...[
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
-                ),
-              ],
-              if (onSignInAgain != null) ...[
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: onSignInAgain,
-                  icon: const Icon(Icons.login, size: 18),
-                  label: const Text('Sign in again'),
-                ),
-              ],
-              const SizedBox(height: 24),
-              TextButton.icon(
-                onPressed: () => _showDebugLog(context),
-                icon: const Icon(Icons.bug_report, size: 18),
-              label: const Text('Show Debug Log'),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
               ),
             ],
-          ),
+            if (onSignInAgain != null) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: onSignInAgain,
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('Sign in again'),
+              ),
+            ],
+            const SizedBox(height: 24),
+            TextButton.icon(
+              onPressed: () => _showDebugLog(context),
+              icon: const Icon(Icons.bug_report, size: 18),
+              label: const Text('Show Debug Log'),
+            ),
+          ],
         ),
       ),
     );

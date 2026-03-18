@@ -146,68 +146,65 @@ class _SignInViewState extends State<SignInView> {
 
   @override
   Widget build(BuildContext context) {
-    // On Web, prevent the browser back button from navigating away
-    // during the sign-in flow (Requirement 8.6).
     return PopScope(
       canPop: !kIsWeb,
       child: Stack(
         children: [
-            // WebView is always in the tree so it can load in the background.
-            if (_errorMessage == null) WebViewWidget(controller: _controller),
+          // WebView is always in the tree so it can load in the background.
+          if (_errorMessage == null) WebViewWidget(controller: _controller),
 
-            // Error state
-            if (_errorMessage != null)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                      const SizedBox(height: 16),
-                      Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _retry,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      ),
-                    ],
-                  ),
+          // Error state
+          if (_errorMessage != null)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                    const SizedBox(height: 16),
+                    Text(
+                      _errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
                 ),
               ),
+            ),
 
-            // Loading indicator
-            if (_isLoading && _errorMessage == null)
-              const Center(child: CircularProgressIndicator()),
+          // Loading indicator
+          if (_isLoading && _errorMessage == null)
+            const Center(child: CircularProgressIndicator()),
 
-            // Floating re-auth button when stuck on the Kiro web page
-            if (_hasNavigatedPastSignIn && !_isLoading && _errorMessage == null)
-              Positioned(
-                bottom: 32,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: SafeArea(
-                    child: ElevatedButton.icon(
-                      onPressed: _forceReAuth,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Sign in again'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.surface,
-                        foregroundColor: Theme.of(context).colorScheme.primary,
-                        elevation: 4,
-                      ),
+          // Floating re-auth button when stuck on the Kiro web page
+          if (_hasNavigatedPastSignIn && !_isLoading && _errorMessage == null)
+            Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: SafeArea(
+                  child: ElevatedButton.icon(
+                    onPressed: _forceReAuth,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Sign in again'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.surface,
+                      foregroundColor: Theme.of(context).colorScheme.primary,
+                      elevation: 4,
                     ),
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
