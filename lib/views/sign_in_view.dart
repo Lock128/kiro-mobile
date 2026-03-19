@@ -92,6 +92,14 @@ class SignInViewState extends State<SignInView> {
             _handleNavigation(url);
           },
           onWebResourceError: (error) {
+            DebugLog.log(
+              'SignInView: WebResourceError '
+              'code=${error.errorCode} '
+              'type=${error.errorType} '
+              'desc="${error.description}" '
+              'mainFrame=${error.isForMainFrame} '
+              'url=${error.url}',
+            );
             // Only treat main frame errors as page-level failures.
             if (error.isForMainFrame ?? true) {
               setState(() {
@@ -104,6 +112,7 @@ class SignInViewState extends State<SignInView> {
             }
           },
           onNavigationRequest: (request) {
+            DebugLog.log('SignInView: navigationRequest url=${request.url}');
             _handleNavigation(request.url);
 
             // Allow navigation to the Kiro domain and OAuth providers.
@@ -126,6 +135,7 @@ class SignInViewState extends State<SignInView> {
               return NavigationDecision.navigate;
             }
 
+            DebugLog.log('SignInView: blocked navigation to ${uri.host}${uri.path}');
             return NavigationDecision.prevent;
           },
         ),
@@ -236,6 +246,12 @@ class SignInViewState extends State<SignInView> {
                       icon: const Icon(Icons.refresh),
                       label: const Text('Retry'),
                     ),
+                    const SizedBox(height: 12),
+                    TextButton.icon(
+                      onPressed: () => DebugLog.shareLog(),
+                      icon: const Icon(Icons.share, size: 18),
+                      label: const Text('Share debug log'),
+                    ),
                   ],
                 ),
               ),
@@ -270,6 +286,27 @@ class SignInViewState extends State<SignInView> {
                       elevation: 4,
                     ),
                   ),
+                ),
+              ),
+            ),
+
+          // Debug log button — always visible on the sign-in screen so
+          // users can share diagnostics even when the WebView renders its
+          // own native error page (where our error widget isn't shown).
+          if (!_isLoading)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => DebugLog.shareLog(),
+                icon: Icon(
+                  Icons.bug_report_outlined,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                tooltip: 'Share debug log',
+                style: IconButton.styleFrom(
+                  backgroundColor:
+                      Theme.of(context).colorScheme.surface.withAlpha(200),
                 ),
               ),
             ),
