@@ -16,11 +16,9 @@ Future<bool> shareLogImpl(String logContent) async {
     final file = File('${dir.path}/kiro_debug_log_$timestamp.txt');
     await file.writeAsString(logContent);
 
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [XFile(file.path)],
-        subject: 'Kiro Debug Log $timestamp',
-      ),
+    await Share.shareXFiles(
+      [XFile(file.path)],
+      subject: 'Kiro Debug Log $timestamp',
     );
     return true;
   } catch (e) {
