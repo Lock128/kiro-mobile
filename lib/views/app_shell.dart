@@ -11,6 +11,7 @@ import '../services/connectivity_monitor.dart';
 import '../services/kiro_api.dart';
 import '../services/instrumented_http_client.dart';
 import '../services/debug_log.dart';
+import '../services/telemetry_service.dart';
 import 'error_view.dart';
 import 'home_view.dart';
 import 'sign_in_view.dart';
@@ -399,8 +400,8 @@ class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
     super.initState();
     final credentials = widget.authManager.credentials;
     if (credentials != null) {
-      _httpClient = InstrumentedHttpClient();
-      _api = KiroApi(credentials: credentials, httpClient: _httpClient);
+      final telemetry = context.read<TelemetryService>();
+      _api = KiroApi(credentials: credentials, telemetryService: telemetry);
     }
   }
 

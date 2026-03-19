@@ -1,0 +1,29 @@
+{
+  "project_type": "Flutter cross-platform app (Android, iOS, Web) for authentication and session management",
+  "language": "Dart",
+  "build_system": "Flutter SDK (^3.11.1), pubspec.yaml for dependency management, no CI workflows",
+  "test_framework": "flutter_test with glados for property-based testing. Tests mirror lib/ structure in test/. Mock implementations of abstract service interfaces. Tests organized per-concern (e.g. auth_manager_sign_in_test.dart).",
+  "build_command": "flutter pub get && flutter analyze",
+  "test_command": "flutter test",
+  "verification_instructions": "1. Run 'flutter pub get' to install dependencies. 2. Run 'flutter analyze' for static analysis. 3. Run 'flutter test' to execute all tests.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "Flutter SDK is NOT pre-installed in the sandbox. Must install Flutter SDK first. Steps: 1. Install Flutter via git clone or snap. 2. Run 'flutter pub get'. 3. Verify with 'flutter analyze' and 'flutter test'.",
+  "environment_constraints": "OPEN_INTERNET network mode - full access for package installation. Flutter SDK is NOT pre-installed (not in sandbox_details). Dart SDK also not pre-installed. Must install Flutter SDK before running any flutter commands. No Android/iOS/Chrome emulators available for run commands, but flutter test and analyze work headless.",
+  "contribution_requirements": "Compliance: Only standard encryption allowed (TLS 1.2+). No custom crypto. flutterrific_opentelemetry uses standard OTLP/gRPC and OTLP/HTTP protocols with TLS, which is compliant. Must not distribute in France. Keep compliance docs updated when adding deps involving cryptography - OTLP uses TLS for transport, which is standard.",
+  "key_patterns": "State management: Provider + ChangeNotifier. Platform abstraction: conditional imports (dart.library.js_interop). Service interfaces: abstract classes with DI via constructors. Entry point: main.dart uses runZonedGuarded for error handling, WidgetsFlutterBinding.ensureInitialized(), MultiProvider. Existing debug logging via DebugLog static class. Files use snake_case, web-specific files suffixed _web.dart, stubs _stub.dart.",
+  "relevant_files": [
+    "lib/main.dart",
+    "lib/services/debug_log.dart",
+    "lib/services/debug_log_share.dart",
+    "lib/services/debug_log_share_web.dart",
+    "lib/services/kiro_api.dart",
+    "lib/services/auth_manager.dart",
+    "lib/services/connectivity_monitor.dart",
+    "lib/views/app_shell.dart",
+    "lib/views/home_view.dart",
+    "pubspec.yaml",
+    "test/services/auth_manager_init_valid_test.dart",
+    "test/services/connectivity_monitor_test.dart"
+  ],
+  "directory_structure": "lib/ - main app code (main.dart entry point, models/, services/, views/). test/ - mirrors lib/ structure. scripts/ - compliance_check.sh. assets/ - app icon. .kiro/steering/ - project steering files (compliance.md, structure.md, tech.md, product.md)."
+}

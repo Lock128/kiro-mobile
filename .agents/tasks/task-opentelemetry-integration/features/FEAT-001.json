@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Install Flutter SDK and the flutterrific_opentelemetry package, then verify the project builds and existing tests pass with the new dependency.",
+  "status": "completed",
+  "steps": [
+    "Install Flutter SDK in the sandbox by cloning the Flutter stable branch to /opt/flutter and adding it to PATH. Run 'flutter doctor' to confirm installation. Note: the project requires Dart SDK ^3.11.1.",
+    "Add 'flutterrific_opentelemetry: ^0.3.4' to the dependencies section of pubspec.yaml (after the existing share_plus entry).",
+    "Run 'flutter pub get' in /projects/sandbox/kiro-mobile to resolve the new dependency and its transitive deps (dartastic_opentelemetry, dartastic_opentelemetry_api, go_router, etc.).",
+    "Run 'flutter analyze' to verify no static analysis issues are introduced by the new dependency.",
+    "Run 'flutter test' to confirm all existing tests still pass."
+  ],
+  "acceptance_criteria": [
+    "Flutter SDK is installed and operational in the sandbox",
+    "pubspec.yaml includes flutterrific_opentelemetry: ^0.3.4 in dependencies",
+    "flutter pub get completes successfully with no version conflicts",
+    "flutter analyze reports no issues",
+    "flutter test passes all existing tests"
+  ],
+  "verification": [
+    "Run 'flutter --version' to confirm Flutter SDK is installed",
+    "Run 'flutter pub get' in /projects/sandbox/kiro-mobile",
+    "Run 'flutter analyze' in /projects/sandbox/kiro-mobile",
+    "Run 'flutter test' in /projects/sandbox/kiro-mobile"
+  ],
+  "blocked_reason": null,
+  "findings": "Flutter 3.41.5 (Dart 3.11.3) installed at /opt/flutter. PATH must include /opt/flutter/bin for all subsequent commands. flutter pub get succeeded with flutterrific_opentelemetry 0.3.4 pulling in dartastic_opentelemetry 0.9.3, dartastic_opentelemetry_api 0.8.8, go_router 14.8.1, grpc 4.2.0, protobuf 4.2.0, and other transitive deps. Pre-existing issues: flutter analyze reports 10 issues (3 errors in test/views/ due to FakeAuthManager missing handleWebSignInWithTokens, 3 warnings for unused elements, 4 infos for use_build_context_synchronously). flutter test shows 30 passing, 3 failing (same FakeAuthManager compilation errors). All issues verified as pre-existing on the base commit."
+}
