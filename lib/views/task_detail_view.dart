@@ -2,8 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../services/auth_manager.dart';
+import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
+import 'message_input_bar.dart';
 
 /// Displays task details and its linked session conversation.
 class TaskDetailView extends StatefulWidget {
@@ -27,6 +31,8 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   bool _loading = true;
   String? _error;
   Timer? _pollTimer;
+  final _scrollController = ScrollController();
+  bool _showScrollToBottom = false;
 
   bool get _isActive {
     final s = widget.task.status?.toUpperCase() ?? '';
@@ -36,6 +42,7 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     if (widget.session != null) {
       _fetchHistory();
       if (_isActive) {
@@ -47,6 +54,22 @@ class _TaskDetailViewState extends State<TaskDetailView> {
     } else {
       _loading = false;
     }
+  }
+
+  void _onScroll() {
+    final atBottom = _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 100;
+    if (_showScrollToBottom == atBottom) {
+      setState(() => _showScrollToBottom = !atBottom);
+    }
+  }
+
+  void _scrollToBottom() {
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _fetchHistory() async {
@@ -62,7 +85,13 @@ class _TaskDetailViewState extends State<TaskDetailView> {
           _error = null;
         });
       }
+    } on AuthExpiredException {
+      DebugLog.log('TaskDetailView: auth expired during fetchHistory');
+      if (mounted) {
+        context.read<AuthManager>().handleAuthError();
+      }
     } catch (e) {
+      DebugLog.log('TaskDetailView: fetchHistory error: $e');
       if (mounted && _loading) {
         setState(() {
           _loading = false;
@@ -75,11 +104,16 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
   String _repoLabel() {
-    final res = widget.session?.providerResources;
+    // Prefer providerResources directly on the task if available.
+    var res = widget.task.providerResources;
+    if (res == null || res.isEmpty) {
+      res = widget.session?.providerResources;
+    }
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
     final gh = res.first['github'] as Map<String, dynamic>?;
@@ -207,6 +241,29 @@ class _TaskDetailViewState extends State<TaskDetailView> {
           ),
           // Conversation
           Expanded(child: _buildConversation(theme)),
+          if (widget.session != null)
+            MessageInputBar(
+              hintText: 'Reply to this task…',
+              onSend: (message) async {
+                try {
+                  await widget.api.generateAgentSessionResponse(
+                    sessionId: widget.session!.sessionId,
+                    message: message,
+                  );
+                  _fetchHistory();
+                } on AuthExpiredException {
+                  if (mounted) {
+                    context.read<AuthManager>().handleAuthError();
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to send: $e')),
+                    );
+                  }
+                }
+              },
+            ),
         ],
       ),
     );
@@ -251,13 +308,28 @@ class _TaskDetailViewState extends State<TaskDetailView> {
         ),
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) {
-        final msg = _messages[index];
-        return _MessageBubble(message: msg);
-      },
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(16),
+          itemCount: _messages.length,
+          itemBuilder: (context, index) {
+            final msg = _messages[index];
+            return _MessageBubble(message: msg);
+          },
+        ),
+        if (_showScrollToBottom)
+          Positioned(
+            right: 16,
+            bottom: 12,
+            child: FloatingActionButton.small(
+              onPressed: _scrollToBottom,
+              tooltip: 'Scroll to bottom',
+              child: const Icon(Icons.arrow_downward),
+            ),
+          ),
+      ],
     );
   }
 }

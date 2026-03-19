@@ -1,16 +1,21 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/auth_state.dart';
 import '../services/auth_manager.dart';
 import '../services/connectivity_monitor.dart';
 import '../services/kiro_api.dart';
+import '../services/debug_log.dart';
+import '../services/telemetry_service.dart';
 import 'error_view.dart';
 import 'home_view.dart';
-import 'platform_views_stub.dart'
-    if (dart.library.js_interop) 'platform_views_web.dart' as platform;
+import 'sign_in_view.dart';
+import 'sign_in_view_stub.dart'
+    if (dart.library.js_interop) 'sign_in_view_web.dart';
 
 /// Root widget that always shows a bottom tab bar (Create, Chats, Tasks)
 /// and swaps the body content based on [AuthManager] state.
@@ -25,6 +30,8 @@ class _AppShellState extends State<AppShell> {
   StreamSubscription<bool>? _connectivitySubscription;
   bool _isOffline = false;
   int _currentIndex = 0;
+  final _signInKey = GlobalKey<SignInViewState>();
+  final _authenticatedBodyKey = GlobalKey<_AuthenticatedBodyState>();
 
   @override
   void initState() {
@@ -60,17 +67,99 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  void _showDebugLogSheet(BuildContext context) {
+    final log = DebugLog.dump();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.3,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Text(
+                    'Debug Log',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Share log file',
+                    onPressed: () => DebugLog.shareLog(),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy),
+                    tooltip: 'Copy to clipboard',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: log));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: log.isEmpty
+                  ? const Center(child: Text('No log entries yet.'))
+                  : ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        SelectableText(
+                          log,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         Consumer<AuthManager>(
           builder: (context, authManager, _) {
-            return Scaffold(
+            return GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: Scaffold(
               appBar: authManager.state == AuthState.authenticated
                   ? AppBar(
                       title: const Text('Kiro'),
                       actions: [
+                        if (_currentIndex == 1 || _currentIndex == 2)
+                          IconButton(
+                            icon: const Icon(Icons.refresh),
+                            tooltip: 'Reload',
+                            onPressed: () => _authenticatedBodyKey
+                                .currentState
+                                ?.reloadCurrentTab(),
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.bug_report_outlined),
+                          tooltip: 'Debug Log',
+                          onPressed: () => _showDebugLogSheet(context),
+                        ),
                         IconButton(
                           icon: const Icon(Icons.logout),
                           tooltip: 'Sign out',
@@ -82,8 +171,16 @@ class _AppShellState extends State<AppShell> {
               body: _buildBody(authManager),
               bottomNavigationBar: NavigationBar(
                 selectedIndex: _currentIndex,
-                onDestinationSelected: (i) =>
-                    setState(() => _currentIndex = i),
+                onDestinationSelected: (i) {
+                    setState(() => _currentIndex = i);
+                    // If still showing the sign-in WebView, try to
+                    // extract credentials — the user may have logged in
+                    // via the SPA without us detecting it.
+                    if (!kIsWeb &&
+                        authManager.state == AuthState.unauthenticated) {
+                      _signInKey.currentState?.tryExtractCredentials();
+                    }
+                  },
                 destinations: const [
                   NavigationDestination(
                     icon: Icon(Icons.add_circle_outline),
@@ -102,6 +199,7 @@ class _AppShellState extends State<AppShell> {
                   ),
                 ],
               ),
+            ),
             );
           },
         ),
@@ -115,9 +213,12 @@ class _AppShellState extends State<AppShell> {
       case AuthState.unknown:
         return const Center(child: CircularProgressIndicator());
       case AuthState.unauthenticated:
-        return platform.buildSignInView();
+        return kIsWeb
+            ? const SignInViewWeb()
+            : SignInView(key: _signInKey);
       case AuthState.authenticated:
         return _AuthenticatedBody(
+          key: _authenticatedBodyKey,
           currentIndex: _currentIndex,
           authManager: authManager,
         );
@@ -174,6 +275,7 @@ class _AppShellState extends State<AppShell> {
 /// the correct tab content via [IndexedStack].
 class _AuthenticatedBody extends StatefulWidget {
   const _AuthenticatedBody({
+    super.key,
     required this.currentIndex,
     required this.authManager,
   });
@@ -187,13 +289,27 @@ class _AuthenticatedBody extends StatefulWidget {
 
 class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
   KiroApi? _api;
+  final _chatsKey = GlobalKey<ChatsTabState>();
+  final _tasksKey = GlobalKey<TasksTabState>();
 
   @override
   void initState() {
     super.initState();
     final credentials = widget.authManager.credentials;
     if (credentials != null) {
-      _api = KiroApi(credentials: credentials);
+      final telemetry = context.read<TelemetryService>();
+      _api = KiroApi(credentials: credentials, telemetryService: telemetry);
+    }
+  }
+
+  void reloadCurrentTab() {
+    switch (widget.currentIndex) {
+      case 1:
+        _chatsKey.currentState?.reload();
+        break;
+      case 2:
+        _tasksKey.currentState?.reload();
+        break;
     }
   }
 
@@ -212,8 +328,8 @@ class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
       index: widget.currentIndex,
       children: [
         CreateTab(api: _api!),
-        ChatsTab(api: _api!),
-        TasksTab(api: _api!),
+        ChatsTab(key: _chatsKey, api: _api!),
+        TasksTab(key: _tasksKey, api: _api!),
       ],
     );
   }

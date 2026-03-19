@@ -1,11 +1,11 @@
 {
-    "name": "kiro_flutter_auth",
-    "short_name": "kiro_flutter_auth",
+    "name": "Kiro Mobile",
+    "short_name": "Kiro Mobile",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Cross-platform authentication and session management for the Kiro platform.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

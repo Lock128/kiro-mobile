@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/auth_manager.dart';
+import '../services/debug_log.dart';
 
 /// Displays the Kiro sign-in page inside a WebView.
 ///
@@ -17,19 +20,55 @@ class SignInView extends StatefulWidget {
   static const String signInUrl = 'https://app.kiro.dev/signin';
 
   @override
-  State<SignInView> createState() => _SignInViewState();
+  State<SignInView> createState() => SignInViewState();
 }
 
-class _SignInViewState extends State<SignInView> {
+class SignInViewState extends State<SignInView> {
   late final WebViewController _controller;
   bool _isLoading = true;
   String? _errorMessage;
   bool _hasNavigatedPastSignIn = false;
+  Timer? _urlPollTimer;
+
+  /// Force credential extraction from the WebView. Called externally
+  /// (e.g. when the user taps a tab) to retry auth detection.
+  void tryExtractCredentials() {
+    // Only retry if we haven't already triggered sign-in completion.
+    if (_signInCompleteTriggered) {
+      DebugLog.log('SignInView: tryExtractCredentials skipped — already triggered');
+      return;
+    }
+    DebugLog.log('SignInView: tryExtractCredentials called externally');
+    _checkCurrentUrl();
+  }
 
   @override
   void initState() {
     super.initState();
     _initWebView();
+    // Poll the WebView URL to detect SPA route changes that don't
+    // trigger onNavigationRequest or onPageFinished.
+    _urlPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _checkCurrentUrl();
+    });
+  }
+
+  @override
+  void dispose() {
+    _urlPollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkCurrentUrl() async {
+    if (_signInCompleteTriggered) return;
+    try {
+      final url = await _controller.currentUrl();
+      if (url != null) {
+        _handleNavigation(url);
+      }
+    } catch (_) {
+      // Controller may not be ready yet.
+    }
   }
 
   void _initWebView() {
@@ -53,6 +92,14 @@ class _SignInViewState extends State<SignInView> {
             _handleNavigation(url);
           },
           onWebResourceError: (error) {
+            DebugLog.log(
+              'SignInView: WebResourceError '
+              'code=${error.errorCode} '
+              'type=${error.errorType} '
+              'desc="${error.description}" '
+              'mainFrame=${error.isForMainFrame} '
+              'url=${error.url}',
+            );
             // Only treat main frame errors as page-level failures.
             if (error.isForMainFrame ?? true) {
               setState(() {
@@ -65,6 +112,7 @@ class _SignInViewState extends State<SignInView> {
             }
           },
           onNavigationRequest: (request) {
+            DebugLog.log('SignInView: navigationRequest url=${request.url}');
             _handleNavigation(request.url);
 
             // Allow navigation to the Kiro domain and OAuth providers.
@@ -87,6 +135,7 @@ class _SignInViewState extends State<SignInView> {
               return NavigationDecision.navigate;
             }
 
+            DebugLog.log('SignInView: blocked navigation to ${uri.host}${uri.path}');
             return NavigationDecision.prevent;
           },
         ),
@@ -96,6 +145,15 @@ class _SignInViewState extends State<SignInView> {
 
   bool _signInCompleteTriggered = false;
 
+  /// Routes that indicate the OAuth flow is still in progress and
+  /// sign-in has NOT yet completed.
+  static const _authInProgressPaths = {
+    '/signin/oauth',
+    '/signin/sso',
+    '/signin/callback',
+    '/signin/redirect',
+  };
+
   /// Detects when the WebView navigates away from the sign-in page,
   /// indicating that sign-in is complete.
   void _handleNavigation(String url) {
@@ -104,21 +162,30 @@ class _SignInViewState extends State<SignInView> {
 
     final signInUri = Uri.parse(SignInView.signInUrl);
 
-    // If the host matches but the path has moved away from /signin,
-    // the user has completed the sign-in flow.
     final isSignInPage =
         uri.host == signInUri.host && uri.path == signInUri.path;
 
-    if (!isSignInPage && uri.host == signInUri.host) {
+    // Ignore intermediate OAuth redirects — these are still part of
+    // the sign-in flow, not the authenticated app.
+    final isAuthInProgress = uri.host == signInUri.host &&
+        _authInProgressPaths.any((p) => uri.path.startsWith(p));
+
+    if (!isSignInPage && !isAuthInProgress && uri.host == signInUri.host) {
+      DebugLog.log('SignInView: navigated past sign-in to ${uri.path}');
       if (!_hasNavigatedPastSignIn) {
         setState(() => _hasNavigatedPastSignIn = true);
       }
-      // Only trigger once — both onNavigationRequest and onPageFinished
-      // may call this for the same navigation.
       if (!_signInCompleteTriggered) {
         _signInCompleteTriggered = true;
-        final authManager = context.read<AuthManager>();
-        authManager.handleSignInComplete(_controller);
+        _urlPollTimer?.cancel();
+        DebugLog.log('SignInView: triggering handleSignInComplete');
+        // Give the page time to finish loading, execute its own
+        // GetToken call, and populate its internal token state.
+        Future.delayed(const Duration(seconds: 3), () {
+          if (!mounted) return;
+          final authManager = context.read<AuthManager>();
+          authManager.handleSignInComplete(_controller);
+        });
       }
     }
   }
@@ -129,6 +196,11 @@ class _SignInViewState extends State<SignInView> {
       _signInCompleteTriggered = false;
       _isLoading = true;
       _errorMessage = null;
+    });
+    // Restart URL polling.
+    _urlPollTimer?.cancel();
+    _urlPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _checkCurrentUrl();
     });
     // Clear cookies so the WebView starts a fresh sign-in.
     final authManager = context.read<AuthManager>();
@@ -174,14 +246,27 @@ class _SignInViewState extends State<SignInView> {
                       icon: const Icon(Icons.refresh),
                       label: const Text('Retry'),
                     ),
+                    const SizedBox(height: 12),
+                    TextButton.icon(
+                      onPressed: () => DebugLog.shareLog(),
+                      icon: const Icon(Icons.share, size: 18),
+                      label: const Text('Share debug log'),
+                    ),
                   ],
                 ),
               ),
             ),
 
-          // Loading indicator
+          // Loading indicator — use an opaque background so the WebView's
+          // own loading spinner doesn't show through, avoiding two visible
+          // spinners at the same time.
           if (_isLoading && _errorMessage == null)
-            const Center(child: CircularProgressIndicator()),
+            Positioned.fill(
+              child: ColoredBox(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+            ),
 
           // Floating re-auth button when stuck on the Kiro web page
           if (_hasNavigatedPastSignIn && !_isLoading && _errorMessage == null)
@@ -201,6 +286,27 @@ class _SignInViewState extends State<SignInView> {
                       elevation: 4,
                     ),
                   ),
+                ),
+              ),
+            ),
+
+          // Debug log button — always visible on the sign-in screen so
+          // users can share diagnostics even when the WebView renders its
+          // own native error page (where our error widget isn't shown).
+          if (!_isLoading)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => DebugLog.shareLog(),
+                icon: Icon(
+                  Icons.bug_report_outlined,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                tooltip: 'Share debug log',
+                style: IconButton.styleFrom(
+                  backgroundColor:
+                      Theme.of(context).colorScheme.surface.withAlpha(200),
                 ),
               ),
             ),

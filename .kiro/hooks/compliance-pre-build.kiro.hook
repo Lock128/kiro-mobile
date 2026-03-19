@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Compliance Pre-Build Check",
+  "description": "Runs the compliance check script before any shell command to catch encryption or distribution violations early",
+  "version": "1",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "shell"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "If the shell command being executed is a flutter build or release command (e.g. flutter build, flutter run --release), first run scripts/compliance_check.sh and abort if it fails. Otherwise proceed normally."
+  }
+}

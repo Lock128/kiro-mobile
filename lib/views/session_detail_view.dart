@@ -2,8 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../services/auth_manager.dart';
+import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
+import 'message_input_bar.dart';
 
 /// Displays a session's message history, polling for updates.
 class SessionDetailView extends StatefulWidget {
@@ -25,15 +29,34 @@ class _SessionDetailViewState extends State<SessionDetailView> {
   bool _loading = true;
   String? _error;
   Timer? _pollTimer;
+  final _scrollController = ScrollController();
+  bool _showScrollToBottom = false;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _fetchHistory();
     // Poll every 3 seconds for new messages.
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
       (_) => _fetchHistory(),
+    );
+  }
+
+  void _onScroll() {
+    final atBottom = _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 100;
+    if (_showScrollToBottom == atBottom) {
+      setState(() => _showScrollToBottom = !atBottom);
+    }
+  }
+
+  void _scrollToBottom() {
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
     );
   }
 
@@ -50,7 +73,13 @@ class _SessionDetailViewState extends State<SessionDetailView> {
           _error = null;
         });
       }
+    } on AuthExpiredException {
+      DebugLog.log('SessionDetailView: auth expired during fetchHistory');
+      if (mounted) {
+        context.read<AuthManager>().handleAuthError();
+      }
     } catch (e) {
+      DebugLog.log('SessionDetailView: fetchHistory error: $e');
       if (mounted && _loading) {
         setState(() {
           _loading = false;
@@ -63,6 +92,7 @@ class _SessionDetailViewState extends State<SessionDetailView> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -87,44 +117,87 @@ class _SessionDetailViewState extends State<SessionDetailView> {
           ),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_error!),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          setState(() => _loading = true);
-                          _fetchHistory();
-                        },
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                )
-              : _messages.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 16),
-                          Text('Waiting for agent response…'),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        final msg = _messages[index];
-                        return _MessageBubble(message: msg);
-                      },
-                    ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(_error!),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() => _loading = true);
+                                _fetchHistory();
+                              },
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _messages.isEmpty
+                        ? const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 16),
+                                Text('Waiting for agent response…'),
+                              ],
+                            ),
+                          )
+                        : Stack(
+                            children: [
+                              ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.all(16),
+                                itemCount: _messages.length,
+                                itemBuilder: (context, index) {
+                                  final msg = _messages[index];
+                                  return _MessageBubble(message: msg);
+                                },
+                              ),
+                              if (_showScrollToBottom)
+                                Positioned(
+                                  right: 16,
+                                  bottom: 12,
+                                  child: FloatingActionButton.small(
+                                    onPressed: _scrollToBottom,
+                                    tooltip: 'Scroll to bottom',
+                                    child: const Icon(Icons.arrow_downward),
+                                  ),
+                                ),
+                            ],
+                          ),
+          ),
+          MessageInputBar(
+            hintText: 'Reply to this chat…',
+            onSend: (message) async {
+              try {
+                await widget.api.generateAgentSessionResponse(
+                  sessionId: widget.sessionId,
+                  message: message,
+                );
+                _fetchHistory();
+              } on AuthExpiredException {
+                if (mounted) {
+                  context.read<AuthManager>().handleAuthError();
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to send: $e')),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
     );
   }
 }
