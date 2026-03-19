@@ -131,6 +131,15 @@ class SignInViewState extends State<SignInView> {
 
   bool _signInCompleteTriggered = false;
 
+  /// Routes that indicate the OAuth flow is still in progress and
+  /// sign-in has NOT yet completed.
+  static const _authInProgressPaths = {
+    '/signin/oauth',
+    '/signin/sso',
+    '/signin/callback',
+    '/signin/redirect',
+  };
+
   /// Detects when the WebView navigates away from the sign-in page,
   /// indicating that sign-in is complete.
   void _handleNavigation(String url) {
@@ -142,7 +151,12 @@ class SignInViewState extends State<SignInView> {
     final isSignInPage =
         uri.host == signInUri.host && uri.path == signInUri.path;
 
-    if (!isSignInPage && uri.host == signInUri.host) {
+    // Ignore intermediate OAuth redirects — these are still part of
+    // the sign-in flow, not the authenticated app.
+    final isAuthInProgress = uri.host == signInUri.host &&
+        _authInProgressPaths.any((p) => uri.path.startsWith(p));
+
+    if (!isSignInPage && !isAuthInProgress && uri.host == signInUri.host) {
       DebugLog.log('SignInView: navigated past sign-in to ${uri.path}');
       if (!_hasNavigatedPastSignIn) {
         setState(() => _hasNavigatedPastSignIn = true);
@@ -151,9 +165,9 @@ class SignInViewState extends State<SignInView> {
         _signInCompleteTriggered = true;
         _urlPollTimer?.cancel();
         DebugLog.log('SignInView: triggering handleSignInComplete');
-        // Give the page a moment to finish loading and set cookies
-        // before attempting credential extraction.
-        Future.delayed(const Duration(seconds: 2), () {
+        // Give the page time to finish loading, execute its own
+        // GetToken call, and populate its internal token state.
+        Future.delayed(const Duration(seconds: 3), () {
           if (!mounted) return;
           final authManager = context.read<AuthManager>();
           authManager.handleSignInComplete(_controller);

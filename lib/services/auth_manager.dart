@@ -159,63 +159,103 @@ class AuthManager extends ChangeNotifier {
 
   /// Reads cookies and tokens from the WebView [controller].
   ///
-  /// Strategy: first call the GetToken endpoint from within the WebView
-  /// (same-origin, so cookies are sent automatically even if HttpOnly).
-  /// If that succeeds we have everything we need. Only fall back to
-  /// reading `document.cookie` via JS if GetToken fails.
+  /// Strategy:
+  /// 1. Try to read the CSRF token from the web app's internal state
+  ///    by dispatching a `kiro:csrf-token-request` custom event and
+  ///    listening for the `kiro:csrf-token-response`.
+  /// 2. Call the GetToken endpoint using the web app's own Smithy client
+  ///    (which handles CBOR encoding/decoding) by hooking into the app's
+  ///    internal fetch interceptor. If that's not available, call GetToken
+  ///    directly and parse the CBOR response as raw bytes to extract the
+  ///    `aoa...` access token.
+  /// 3. Fall back to reading `document.cookie` for non-HttpOnly cookies.
   ///
-  /// Uses a fire-and-poll pattern instead of [runJavaScriptReturningResult]
-  /// for the async GetToken call because iOS WKWebView cannot resolve
-  /// Promises returned by async IIFEs — it throws
-  /// `FWFEvaluateJavaScriptError`. The async JS stores its result in a
-  /// global variable (`window._kiroAuthResult`) which we then poll for
-  /// synchronously.
+  /// Uses a fire-and-poll pattern because iOS WKWebView cannot resolve
+  /// Promises from async IIFEs via [runJavaScriptReturningResult].
   Future<AuthCredentials?> extractCredentials(
       WebViewController controller) async {
     try {
-      // ── 1. Try GetToken endpoint via fire-and-poll (primary path) ──
       String? bearerToken;
       String? csrfToken;
+
+      // ── 1. Extract CSRF token from the web app's custom event system ──
+      try {
+        DebugLog.log('extractCredentials: requesting CSRF token via custom event');
+        await controller.runJavaScript('''
+          window._kiroCsrfResult = null;
+          window.addEventListener('kiro:csrf-token-response', function handler(e) {
+            window._kiroCsrfResult = e.detail && e.detail.token ? e.detail.token : '';
+            window.removeEventListener('kiro:csrf-token-response', handler);
+          });
+          window.dispatchEvent(new CustomEvent('kiro:csrf-token-request'));
+        ''');
+
+        // Poll for the CSRF token result.
+        for (var i = 0; i < 10; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          try {
+            final result = await controller.runJavaScriptReturningResult(
+              'window._kiroCsrfResult || ""',
+            );
+            final raw = result.toString().replaceAll('"', '');
+            if (raw.isNotEmpty) {
+              csrfToken = raw;
+              DebugLog.log('extractCredentials: got CSRF token (${raw.length} chars)');
+              break;
+            }
+          } catch (_) {}
+        }
+        if (csrfToken == null) {
+          DebugLog.log('extractCredentials: CSRF token not available via event');
+        }
+      } catch (e) {
+        DebugLog.log('extractCredentials: CSRF event error: $e');
+      }
+
+      // ── 2. Call GetToken and extract the access token from CBOR ──
       try {
         DebugLog.log('extractCredentials: calling GetToken endpoint');
 
-        // Clear any previous result and kick off the async fetch.
-        // runJavaScript is fire-and-forget — no Promise resolution needed.
-        await controller.runJavaScript(
-          '''
+        // The GetToken endpoint returns CBOR. We fetch the raw bytes,
+        // convert to a string, and extract the `aoa...` access token
+        // using a regex — this avoids needing a full CBOR decoder.
+        await controller.runJavaScript('''
           window._kiroAuthResult = null;
           (async function() {
             try {
+              var csrfToken = ${csrfToken != null ? 'window._kiroCsrfResult || ""' : '""'};
               var resp = await fetch(
                 '/service/KiroWebPortalService/operation/GetToken',
                 {
                   method: 'POST',
                   credentials: 'include',
                   headers: {
-                    'accept': 'application/json',
-                    'content-type': 'application/json'
+                    'accept': 'application/cbor',
+                    'content-type': 'application/json',
+                    'smithy-protocol': 'rpc-v2-cbor',
+                    'x-csrf-token': csrfToken
                   },
-                  body: JSON.stringify({})
+                  body: JSON.stringify({csrfToken: csrfToken})
                 }
               );
               var status = resp.status;
-              var text = await resp.text();
-              try {
-                var data = JSON.parse(text);
-                window._kiroAuthResult = JSON.stringify({
-                  status: status,
-                  accessToken: data.accessToken || '',
-                  csrfToken: data.csrfToken || ''
-                });
-              } catch(e) {
-                var match = text.match(/aoa[A-Za-z0-9+\\\\/=:]+/);
-                window._kiroAuthResult = JSON.stringify({
-                  status: status,
-                  accessToken: match ? match[0] : '',
-                  csrfToken: '',
-                  parseError: e.toString()
-                });
+              var buf = await resp.arrayBuffer();
+              var bytes = new Uint8Array(buf);
+              var text = '';
+              for (var i = 0; i < bytes.length; i++) {
+                if (bytes[i] >= 32 && bytes[i] < 127) {
+                  text += String.fromCharCode(bytes[i]);
+                } else {
+                  text += ' ';
+                }
               }
+              var tokenMatch = text.match(/aoa[A-Za-z0-9_\\-+\\/=:.]+/);
+              var accessToken = tokenMatch ? tokenMatch[0] : '';
+              window._kiroAuthResult = JSON.stringify({
+                status: status,
+                accessToken: accessToken,
+                csrfToken: csrfToken || ''
+              });
             } catch(e) {
               window._kiroAuthResult = JSON.stringify({
                 status: 0, accessToken: '', csrfToken: '',
@@ -223,10 +263,9 @@ class AuthManager extends ChangeNotifier {
               });
             }
           })();
-          ''',
-        );
+        ''');
 
-        // Poll for the result — the fetch typically completes in <2s.
+        // Poll for the result.
         String? parsed;
         for (var i = 0; i < 20; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 500));
@@ -254,7 +293,7 @@ class AuthManager extends ChangeNotifier {
               final at = map['accessToken'] as String? ?? '';
               final ct = map['csrfToken'] as String? ?? '';
               if (at.isNotEmpty) bearerToken = at;
-              if (ct.isNotEmpty) csrfToken = ct;
+              if (ct.isNotEmpty && csrfToken == null) csrfToken = ct;
               DebugLog.log('extractCredentials: GetToken status=${map['status']}, '
                   'accessToken=${at.isNotEmpty}, csrfToken=${ct.isNotEmpty}');
             }
@@ -266,7 +305,7 @@ class AuthManager extends ChangeNotifier {
         DebugLog.log('extractCredentials: GetToken call failed: $e');
       }
 
-      // ── 2. Read cookies via JS (may be empty on iOS for HttpOnly) ──
+      // ── 3. Read cookies via JS (may be empty on iOS for HttpOnly) ──
       final cookiesResult = await controller.runJavaScriptReturningResult(
         'document.cookie',
       );
@@ -278,9 +317,7 @@ class AuthManager extends ChangeNotifier {
       final accessTokenCookie = cookies['AccessToken'] ?? '';
       final sessionToken = cookies['SessionToken'] ?? '';
 
-      // ── 3. Determine the primary token ──────────────────────
-      // Prefer the bearer token from GetToken, then SessionToken cookie,
-      // then AccessToken cookie.
+      // ── 4. Determine the primary token ──────────────────────
       final token = bearerToken ??
           (sessionToken.isNotEmpty ? sessionToken : null) ??
           (accessTokenCookie.isNotEmpty ? accessTokenCookie : null) ??
@@ -295,7 +332,6 @@ class AuthManager extends ChangeNotifier {
         return null;
       }
 
-      // Use bearer token from GetToken, or fall back to AccessToken cookie.
       bearerToken ??= accessTokenCookie.isNotEmpty ? accessTokenCookie : null;
 
       return AuthCredentials(
