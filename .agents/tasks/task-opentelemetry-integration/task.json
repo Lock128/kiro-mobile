@@ -1,0 +1,7 @@
+{
+  "task_id": "task-opentelemetry-integration",
+  "task_description": "Integrate OpenTelemetry observability (logs, metrics, and traces) into the kiro-mobile Flutter app using the flutterrific_opentelemetry plugin. Telemetry data should be exported to an OpenTelemetry backend via OTLP. This includes initializing OTel in main.dart, instrumenting HTTP API calls with trace spans, bridging existing debug logging to OTel, and making the OTLP endpoint configurable via compile-time flags.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}
