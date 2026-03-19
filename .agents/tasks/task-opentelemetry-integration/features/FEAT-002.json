@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Integrate OpenTelemetry observability into the Flutter app using flutterrific_opentelemetry. This includes: creating a telemetry service abstraction, initializing OpenTelemetry in main.dart, instrumenting the HTTP client (KiroApi) with trace spans, bridging DebugLog to emit OTel log records, adding custom metrics for key operations, and writing unit tests for the new telemetry service.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1 - Create lib/services/telemetry_service.dart: Create an abstract TelemetryService interface and a concrete FlutterOTelTelemetryService implementation that wraps flutterrific_opentelemetry's FlutterOTel. The interface should expose: initialize(), shutdown(), reportError(String source, dynamic error, StackTrace? stackTrace), startSpan(String name, {Map<String, Object>? attributes}), and a getter for the tracer. The concrete implementation calls FlutterOTel.initialize() with serviceName 'kiro-flutter-auth', serviceVersion '1.0.0', tracerName 'kiro-app', and resourceAttributes including deployment.environment and service.namespace. Following the project's abstract interface + DI pattern (like CredentialStore, ConnectivityMonitor).",
     "Step 2 - Create lib/services/telemetry_config.dart: Create a configuration class that reads OpenTelemetry endpoint and settings from compile-time environment variables using String.fromEnvironment(). Support OTEL_EXPORTER_OTLP_ENDPOINT (default: http://localhost:4317), OTEL_EXPORTER_OTLP_PROTOCOL (default: grpc), OTEL_SERVICE_NAME (default: kiro-flutter-auth), OTEL_SERVICE_VERSION (default: 1.0.0). This enables configuring the OTLP backend endpoint at build time via --dart-define flags.",
@@ -34,5 +34,5 @@
     "Verify test/services/telemetry_service_test.dart exists and tests pass"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 9 steps implemented successfully. flutter analyze shows 10 issues, all pre-existing (3 errors in test/views/ due to FakeAuthManager missing handleWebSignInWithTokens, 3 warnings for unused elements, 4 infos for use_build_context_synchronously). flutter test: 41 passed, 3 failed (same pre-existing FakeAuthManager failures). 11 new telemetry tests all pass. TelemetryService uses dynamic tracer getter to avoid coupling the abstract interface to the concrete OTel SDK types. KiroApi _startSpan helper uses dynamic dispatch for nullable span operations. The toAttributes() extension from flutterrific_opentelemetry is used for creating Attributes from Map<String, Object>. FlutterOTel.initialize() is async so main.dart runZonedGuarded callback was made async."
 }
