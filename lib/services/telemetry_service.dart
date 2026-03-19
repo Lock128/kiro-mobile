@@ -64,3 +64,26 @@ class FlutterOTelTelemetryService implements TelemetryService {
     FlutterOTel.forceFlush();
   }
 }
+
+/// No-op [TelemetryService] used when OTel is not configured.
+///
+/// All methods are safe to call but do nothing, keeping the rest of the app
+/// code free of null-checks.
+class NoOpTelemetryService implements TelemetryService {
+  @override
+  Future<void> initialize({
+    required String serviceName,
+    required String serviceVersion,
+    String? tracerName,
+    Map<String, String>? resourceAttributes,
+  }) async {}
+
+  @override
+  void reportError(String source, dynamic error, StackTrace? stackTrace) {}
+
+  @override
+  dynamic get tracer => null;
+
+  @override
+  void shutdown() {}
+}

@@ -7,10 +7,16 @@
 class TelemetryConfig {
   TelemetryConfig._();
 
+  static const _defaultEndpoint = 'http://localhost:4317';
+
   static const endpoint = String.fromEnvironment(
     'OTEL_EXPORTER_OTLP_ENDPOINT',
-    defaultValue: 'http://localhost:4317',
+    defaultValue: _defaultEndpoint,
   );
+
+  /// Whether a real OTLP endpoint was explicitly provided at build time.
+  /// When `false`, OTel is skipped entirely to avoid noisy errors.
+  static bool get isConfigured => endpoint != _defaultEndpoint;
 
   static const protocol = String.fromEnvironment(
     'OTEL_EXPORTER_OTLP_PROTOCOL',
