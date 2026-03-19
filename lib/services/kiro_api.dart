@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
@@ -24,6 +25,25 @@ class KiroApi {
 
   static const _uuid = Uuid();
 
+  static String get _osLabel {
+    if (kIsWeb) return 'web';
+    // defaultTargetPlatform is safe on non-web.
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        return 'iOS';
+      case TargetPlatform.android:
+        return 'Android';
+      case TargetPlatform.macOS:
+        return 'macOS';
+      case TargetPlatform.linux:
+        return 'Linux';
+      case TargetPlatform.windows:
+        return 'Windows';
+      default:
+        return 'other';
+    }
+  }
+
   Map<String, String> get _headers => {
         'accept': '*/*',
         'content-type': 'application/json',
@@ -32,7 +52,7 @@ class KiroApi {
         if (_credentials.csrfToken != null)
           'x-csrf-token': _credentials.csrfToken!,
         'x-amz-user-agent':
-            'aws-sdk-js/1.0.0 ua/2.1 os/macOS lang/js api/bigweaver#1.0.0',
+            'aws-sdk-js/1.0.0 ua/2.1 os/$_osLabel lang/js api/bigweaver#1.0.0',
         'amz-sdk-invocation-id': _uuid.v4(),
         'amz-sdk-request': 'attempt=1; max=1',
       };

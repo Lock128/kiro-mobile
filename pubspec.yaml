@@ -40,6 +40,8 @@ dependencies:
   web: ^1.1.1
   http: ^1.2.0
   uuid: ^4.5.1
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
 
 dev_dependencies:
   flutter_test:

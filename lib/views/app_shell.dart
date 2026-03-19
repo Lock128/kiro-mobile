@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/auth_state.dart';
@@ -65,13 +66,82 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  void _showDebugLogSheet(BuildContext context) {
+    final log = DebugLog.dump();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.3,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Text(
+                    'Debug Log',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Share log file',
+                    onPressed: () => DebugLog.shareLog(),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy),
+                    tooltip: 'Copy to clipboard',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: log));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: log.isEmpty
+                  ? const Center(child: Text('No log entries yet.'))
+                  : ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        SelectableText(
+                          log,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         Consumer<AuthManager>(
           builder: (context, authManager, _) {
-            return Scaffold(
+            return GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: Scaffold(
               appBar: authManager.state == AuthState.authenticated
                   ? AppBar(
                       title: const Text('Kiro'),
@@ -84,6 +154,11 @@ class _AppShellState extends State<AppShell> {
                                 .currentState
                                 ?.reloadCurrentTab(),
                           ),
+                        IconButton(
+                          icon: const Icon(Icons.bug_report_outlined),
+                          tooltip: 'Debug Log',
+                          onPressed: () => _showDebugLogSheet(context),
+                        ),
                         IconButton(
                           icon: const Icon(Icons.logout),
                           tooltip: 'Sign out',
@@ -123,6 +198,7 @@ class _AppShellState extends State<AppShell> {
                   ),
                 ],
               ),
+            ),
             );
           },
         ),

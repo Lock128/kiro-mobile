@@ -47,6 +47,11 @@ class ErrorView extends StatelessWidget {
                   ),
                   const Spacer(),
                   IconButton(
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Share log file',
+                    onPressed: () => DebugLog.shareLog(),
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.copy),
                     tooltip: 'Copy to clipboard',
                     onPressed: () {
