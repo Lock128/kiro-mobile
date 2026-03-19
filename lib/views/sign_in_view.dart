@@ -33,8 +33,12 @@ class SignInViewState extends State<SignInView> {
   /// Force credential extraction from the WebView. Called externally
   /// (e.g. when the user taps a tab) to retry auth detection.
   void tryExtractCredentials() {
+    // Only retry if we haven't already triggered sign-in completion.
+    if (_signInCompleteTriggered) {
+      DebugLog.log('SignInView: tryExtractCredentials skipped — already triggered');
+      return;
+    }
     DebugLog.log('SignInView: tryExtractCredentials called externally');
-    _signInCompleteTriggered = false;
     _checkCurrentUrl();
   }
 

@@ -217,8 +217,13 @@ class AuthManager extends ChangeNotifier {
         DebugLog.log('extractCredentials: calling GetToken endpoint');
 
         // The GetToken endpoint returns CBOR. We fetch the raw bytes,
-        // convert to a string, and extract the `aoa...` access token
-        // using a regex — this avoids needing a full CBOR decoder.
+        // base64-encode them in JS, and decode on the Dart side to
+        // extract the `aoa...` access token. This avoids issues with
+        // non-printable CBOR framing bytes breaking regex matches in JS.
+        //
+        // We store three pipe-separated values in _kiroAuthResult:
+        //   status|base64EncodedBody|csrfToken
+        // This avoids JSON serialization issues where iOS strips quotes.
         await controller.runJavaScript('''
           window._kiroAuthResult = null;
           (async function() {
@@ -241,26 +246,14 @@ class AuthManager extends ChangeNotifier {
               var status = resp.status;
               var buf = await resp.arrayBuffer();
               var bytes = new Uint8Array(buf);
-              var text = '';
+              var binary = '';
               for (var i = 0; i < bytes.length; i++) {
-                if (bytes[i] >= 32 && bytes[i] < 127) {
-                  text += String.fromCharCode(bytes[i]);
-                } else {
-                  text += ' ';
-                }
+                binary += String.fromCharCode(bytes[i]);
               }
-              var tokenMatch = text.match(/aoa[A-Za-z0-9_\\-+\\/=:.]+/);
-              var accessToken = tokenMatch ? tokenMatch[0] : '';
-              window._kiroAuthResult = JSON.stringify({
-                status: status,
-                accessToken: accessToken,
-                csrfToken: csrfToken || ''
-              });
+              var b64 = btoa(binary);
+              window._kiroAuthResult = status + '|' + b64 + '|' + csrfToken;
             } catch(e) {
-              window._kiroAuthResult = JSON.stringify({
-                status: 0, accessToken: '', csrfToken: '',
-                fetchError: e.toString()
-              });
+              window._kiroAuthResult = '0|error:' + e.toString() + '|';
             }
           })();
         ''');
@@ -273,9 +266,13 @@ class AuthManager extends ChangeNotifier {
             final result = await controller.runJavaScriptReturningResult(
               'window._kiroAuthResult || ""',
             );
-            final raw = result.toString().replaceAll('"', '');
-            if (raw.isNotEmpty) {
-              parsed = raw;
+            final raw = result.toString();
+            // Strip surrounding quotes if present (iOS adds them).
+            final cleaned = raw.startsWith('"') && raw.endsWith('"')
+                ? raw.substring(1, raw.length - 1)
+                : raw;
+            if (cleaned.isNotEmpty && cleaned.contains('|')) {
+              parsed = cleaned;
               break;
             }
           } catch (e) {
@@ -286,19 +283,41 @@ class AuthManager extends ChangeNotifier {
         if (parsed == null || parsed.isEmpty) {
           DebugLog.log('extractCredentials: GetToken poll timed out');
         } else {
-          DebugLog.log('extractCredentials: GetToken raw result: $parsed');
-          try {
-            if (parsed.startsWith('{')) {
-              final map = Map<String, dynamic>.from(_parseSimpleJson(parsed));
-              final at = map['accessToken'] as String? ?? '';
-              final ct = map['csrfToken'] as String? ?? '';
-              if (at.isNotEmpty) bearerToken = at;
-              if (ct.isNotEmpty && csrfToken == null) csrfToken = ct;
-              DebugLog.log('extractCredentials: GetToken status=${map['status']}, '
-                  'accessToken=${at.isNotEmpty}, csrfToken=${ct.isNotEmpty}');
+          // Parse: status|base64body|csrfToken
+          final parts = parsed.split('|');
+          final status = parts.isNotEmpty ? parts[0] : '0';
+          final b64Body = parts.length > 1 ? parts[1] : '';
+          final csrfFromResponse = parts.length > 2 ? parts[2] : '';
+
+          DebugLog.log('extractCredentials: GetToken status=$status, '
+              'bodyLen=${b64Body.length}, csrf=${csrfFromResponse.isNotEmpty}');
+
+          if (csrfFromResponse.isNotEmpty && csrfToken == null) {
+            csrfToken = csrfFromResponse;
+          }
+
+          if (b64Body.isNotEmpty && !b64Body.startsWith('error:')) {
+            try {
+              final bodyBytes = base64Decode(b64Body);
+              // Convert bytes to a string, replacing non-printable chars
+              // with spaces, then extract the aoa... token via regex.
+              final bodyText = String.fromCharCodes(
+                bodyBytes.map((b) => (b >= 32 && b < 127) ? b : 32),
+              );
+              DebugLog.log('extractCredentials: CBOR body text (${bodyText.length} chars): '
+                  '${bodyText.substring(0, bodyText.length > 100 ? 100 : bodyText.length)}...');
+
+              final tokenMatch = RegExp(r'aoa[A-Za-z0-9_\-+/=:.]+').firstMatch(bodyText);
+              if (tokenMatch != null) {
+                bearerToken = tokenMatch.group(0);
+                DebugLog.log('extractCredentials: extracted bearer token '
+                    '(${bearerToken!.length} chars)');
+              } else {
+                DebugLog.log('extractCredentials: no aoa token found in CBOR body');
+              }
+            } catch (e) {
+              DebugLog.log('extractCredentials: base64/CBOR decode error: $e');
             }
-          } catch (e) {
-            DebugLog.log('extractCredentials: GetToken parse error: $e');
           }
         }
       } catch (e) {
