@@ -1,5 +1,5 @@
 name: kiro_flutter_auth
-description: "A new Flutter project."
+description: "Cross-platform authentication and session management for the Kiro platform."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -98,5 +98,10 @@ flutter:
 flutter_launcher_icons:
   ios: true
   android: true
+  web:
+    generate: true
+    image_path: "assets/kiro_ghost.jpg"
+    background_color: "#0175C2"
+    theme_color: "#0175C2"
   image_path: "assets/kiro_ghost.jpg"
   remove_alpha_ios: true
