@@ -66,5 +66,16 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Compliance: App uses only standard HTTPS/TLS and platform Keychain encryption.
+	     No custom or non-exempt encryption is included. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- Compliance: Geographic distribution restriction.
+	     This app must NOT be distributed in the following territories.
+	     Ensure App Store Connect availability settings exclude these regions. -->
+	<key>ITSExcludedTerritories</key>
+	<array>
+		<string>FR</string>
+	</array>
 </dict>
 </plist>

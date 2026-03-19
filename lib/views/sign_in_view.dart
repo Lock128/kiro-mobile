@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/auth_manager.dart';
+import '../services/debug_log.dart';
 
 /// Displays the Kiro sign-in page inside a WebView.
 ///
@@ -17,19 +20,51 @@ class SignInView extends StatefulWidget {
   static const String signInUrl = 'https://app.kiro.dev/signin';
 
   @override
-  State<SignInView> createState() => _SignInViewState();
+  State<SignInView> createState() => SignInViewState();
 }
 
-class _SignInViewState extends State<SignInView> {
+class SignInViewState extends State<SignInView> {
   late final WebViewController _controller;
   bool _isLoading = true;
   String? _errorMessage;
   bool _hasNavigatedPastSignIn = false;
+  Timer? _urlPollTimer;
+
+  /// Force credential extraction from the WebView. Called externally
+  /// (e.g. when the user taps a tab) to retry auth detection.
+  void tryExtractCredentials() {
+    DebugLog.log('SignInView: tryExtractCredentials called externally');
+    _signInCompleteTriggered = false;
+    _checkCurrentUrl();
+  }
 
   @override
   void initState() {
     super.initState();
     _initWebView();
+    // Poll the WebView URL to detect SPA route changes that don't
+    // trigger onNavigationRequest or onPageFinished.
+    _urlPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _checkCurrentUrl();
+    });
+  }
+
+  @override
+  void dispose() {
+    _urlPollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkCurrentUrl() async {
+    if (_signInCompleteTriggered) return;
+    try {
+      final url = await _controller.currentUrl();
+      if (url != null) {
+        _handleNavigation(url);
+      }
+    } catch (_) {
+      // Controller may not be ready yet.
+    }
   }
 
   void _initWebView() {
@@ -104,19 +139,18 @@ class _SignInViewState extends State<SignInView> {
 
     final signInUri = Uri.parse(SignInView.signInUrl);
 
-    // If the host matches but the path has moved away from /signin,
-    // the user has completed the sign-in flow.
     final isSignInPage =
         uri.host == signInUri.host && uri.path == signInUri.path;
 
     if (!isSignInPage && uri.host == signInUri.host) {
+      DebugLog.log('SignInView: navigated past sign-in to ${uri.path}');
       if (!_hasNavigatedPastSignIn) {
         setState(() => _hasNavigatedPastSignIn = true);
       }
-      // Only trigger once — both onNavigationRequest and onPageFinished
-      // may call this for the same navigation.
       if (!_signInCompleteTriggered) {
         _signInCompleteTriggered = true;
+        _urlPollTimer?.cancel();
+        DebugLog.log('SignInView: triggering handleSignInComplete');
         final authManager = context.read<AuthManager>();
         authManager.handleSignInComplete(_controller);
       }
@@ -129,6 +163,11 @@ class _SignInViewState extends State<SignInView> {
       _signInCompleteTriggered = false;
       _isLoading = true;
       _errorMessage = null;
+    });
+    // Restart URL polling.
+    _urlPollTimer?.cancel();
+    _urlPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _checkCurrentUrl();
     });
     // Clear cookies so the WebView starts a fresh sign-in.
     final authManager = context.read<AuthManager>();

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 
 import '../models/auth_credentials.dart';
 
@@ -21,6 +22,8 @@ class KiroApi {
   String? _instanceId;
   String? _connectionId;
 
+  static const _uuid = Uuid();
+
   Map<String, String> get _headers => {
         'accept': '*/*',
         'content-type': 'application/json',
@@ -30,6 +33,8 @@ class KiroApi {
           'x-csrf-token': _credentials.csrfToken!,
         'x-amz-user-agent':
             'aws-sdk-js/1.0.0 ua/2.1 os/macOS lang/js api/bigweaver#1.0.0',
+        'amz-sdk-invocation-id': _uuid.v4(),
+        'amz-sdk-request': 'attempt=1; max=1',
       };
 
   /// Resolves the instanceId by calling ListInstances (cached after first call).
@@ -201,6 +206,25 @@ class KiroApi {
     return data['sessionId'] as String;
   }
 
+  /// Fetches session details. Also used to ensure the session is ready
+  /// on the backend before sending a message.
+  Future<Map<String, dynamic>> getSession({
+    required String sessionId,
+  }) async {
+    final instanceId = await _getInstanceId();
+    final response = await _client.post(
+      Uri.parse('$_baseUrl/getSession'),
+      headers: _headers,
+      body: jsonEncode({
+        'instanceId': instanceId,
+        'sessionId': sessionId,
+        'profileArn': _profileArn,
+      }),
+    );
+    _checkResponse(response, 'getSession');
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   /// Sends a user message to an existing session (fire-and-forget streaming call).
   /// Returns immediately — poll [listSessionHistory] for updates.
   Future<void> generateAgentSessionResponse({
@@ -220,10 +244,8 @@ class KiroApi {
     request.body = jsonEncode({
       'instanceId': instanceId,
       'sessionId': sessionId,
+      'prompt': message,
       'profileArn': _profileArn,
-      'content': {
-        'text': {'content': message},
-      },
     });
 
     final streamed = await _client.send(request);

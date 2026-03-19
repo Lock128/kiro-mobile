@@ -82,7 +82,10 @@ class _CreateTabState extends State<CreateTab> {
         repos: _selectedRepos,
       );
 
-      // 2. Send the user message.
+      // 2. Ensure the session is ready on the backend.
+      await widget.api.getSession(sessionId: sessionId);
+
+      // 3. Send the user message.
       await widget.api.generateAgentSessionResponse(
         sessionId: sessionId,
         message: prompt,
@@ -316,16 +319,21 @@ class ChatsTab extends StatefulWidget {
   final KiroApi api;
 
   @override
-  State<ChatsTab> createState() => _ChatsTabState();
+  State<ChatsTab> createState() => ChatsTabState();
 }
 
-class _ChatsTabState extends State<ChatsTab> {
+class ChatsTabState extends State<ChatsTab> {
   late Future<List<ChatSession>> _future;
 
   @override
   void initState() {
     super.initState();
     _future = widget.api.listSessions();
+  }
+
+  void reload() {
+    final f = widget.api.listSessions();
+    setState(() => _future = f);
   }
 
   String _repoLabel(ChatSession s) {
@@ -362,8 +370,10 @@ class _ChatsTabState extends State<ChatsTab> {
           }
           return _ErrorRetry(
             message: 'Failed to load chats.',
-            onRetry: () =>
-                setState(() => _future = widget.api.listSessions()),
+            onRetry: () {
+              final f = widget.api.listSessions();
+              setState(() => _future = f);
+            },
           );
         }
 
@@ -526,16 +536,21 @@ class TasksTab extends StatefulWidget {
   final KiroApi api;
 
   @override
-  State<TasksTab> createState() => _TasksTabState();
+  State<TasksTab> createState() => TasksTabState();
 }
 
-class _TasksTabState extends State<TasksTab> {
+class TasksTabState extends State<TasksTab> {
   late Future<_TasksData> _future;
 
   @override
   void initState() {
     super.initState();
     _future = _loadTasks();
+  }
+
+  void reload() {
+    final f = _loadTasks();
+    setState(() => _future = f);
   }
 
   Future<_TasksData> _loadTasks() async {
@@ -649,7 +664,10 @@ class _TasksTabState extends State<TasksTab> {
           }
           return _ErrorRetry(
             message: 'Failed to load tasks.',
-            onRetry: () => setState(() => _future = _loadTasks()),
+            onRetry: () {
+              final f = _loadTasks();
+              setState(() => _future = f);
+            },
           );
         }
 
