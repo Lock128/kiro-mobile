@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../services/auth_manager.dart';
 import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
+import 'content_formatter.dart';
+import 'formatted_content_view.dart';
 import 'message_input_bar.dart';
 
 /// Displays a session's message history, polling for updates.
@@ -210,26 +211,7 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
     final theme = Theme.of(context);
-
-    // Try to extract readable text from the content.
-    String displayText;
-    try {
-      // Content might be JSON like {"text": "actual message"}
-      if (message.content != null && message.content!.startsWith('{')) {
-        final parsed =
-            Map<String, dynamic>.from(_tryParseJson(message.content!));
-        displayText = parsed['text'] as String? ?? message.content!;
-      } else {
-        displayText = message.content ?? '(no content)';
-      }
-    } catch (_) {
-      displayText = message.content ?? '(no content)';
-    }
-
-    // Truncate very long tool results.
-    if (displayText.length > 500) {
-      displayText = '${displayText.substring(0, 500)}…';
-    }
+    final formatted = ContentFormatter.format(message.content);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -269,7 +251,7 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-                  Text(displayText, style: theme.textTheme.bodyMedium),
+                  FormattedContentView(content: formatted),
                   if (message.timestamp != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -288,16 +270,6 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static Map<String, dynamic> _tryParseJson(String text) {
-    try {
-      return Map<String, dynamic>.from(
-        const JsonDecoder().convert(text) as Map,
-      );
-    } catch (_) {
-      return {};
-    }
   }
 
   static String _formatTime(DateTime dt) {

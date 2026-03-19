@@ -37,6 +37,8 @@ class _CreateTabState extends State<CreateTab> {
     });
     try {
       final repos = await widget.api.listConnectionResources();
+      repos.sort((a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
       if (mounted) {
         setState(() {
           _repos = repos;

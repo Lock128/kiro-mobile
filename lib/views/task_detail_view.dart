@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../services/auth_manager.dart';
 import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
+import 'content_formatter.dart';
+import 'formatted_content_view.dart';
 import 'message_input_bar.dart';
 
 /// Displays task details and its linked session conversation.
@@ -361,37 +362,7 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
     final theme = Theme.of(context);
-
-    String displayText;
-    try {
-      if (message.content != null && message.content!.startsWith('{')) {
-        final parsed =
-            Map<String, dynamic>.from(_tryParseJson(message.content!));
-        // Handle nested {text: {content: "..."}} from activities
-        if (parsed.containsKey('text') && parsed['text'] is Map) {
-          final inner = parsed['text'] as Map;
-          displayText = inner['content'] as String? ?? message.content!;
-          // The inner content might itself be JSON like {"text": "actual msg"}
-          if (displayText.startsWith('{')) {
-            try {
-              final innerParsed = Map<String, dynamic>.from(
-                  _tryParseJson(displayText));
-              displayText = innerParsed['text'] as String? ?? displayText;
-            } catch (_) {}
-          }
-        } else {
-          displayText = parsed['text'] as String? ?? message.content!;
-        }
-      } else {
-        displayText = message.content ?? '(no content)';
-      }
-    } catch (_) {
-      displayText = message.content ?? '(no content)';
-    }
-
-    if (displayText.length > 800) {
-      displayText = '${displayText.substring(0, 800)}…';
-    }
+    final formatted = ContentFormatter.format(message.content);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -432,7 +403,7 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-                  Text(displayText, style: theme.textTheme.bodyMedium),
+                  FormattedContentView(content: formatted),
                   if (message.timestamp != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -451,16 +422,6 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static Map<String, dynamic> _tryParseJson(String text) {
-    try {
-      return Map<String, dynamic>.from(
-        const JsonDecoder().convert(text) as Map,
-      );
-    } catch (_) {
-      return {};
-    }
   }
 
   static String _formatTime(DateTime dt) {

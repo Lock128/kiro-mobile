@@ -9,6 +9,7 @@ import '../models/auth_state.dart';
 import '../services/auth_manager.dart';
 import '../services/connectivity_monitor.dart';
 import '../services/kiro_api.dart';
+import '../services/instrumented_http_client.dart';
 import '../services/debug_log.dart';
 import 'error_view.dart';
 import 'home_view.dart';
@@ -133,6 +134,102 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  void _showApiMetricsSheet(BuildContext context) {
+    final client = _authenticatedBodyKey.currentState?.httpClient;
+    if (client == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No API metrics available yet.')),
+      );
+      return;
+    }
+    final metrics = client.metrics;
+    final json = client.dumpMetricsJson();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.3,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Text(
+                    'API Metrics (${metrics.length})',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.copy),
+                    tooltip: 'Copy JSON to clipboard',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: json));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('API metrics copied to clipboard')),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Clear metrics',
+                    onPressed: () {
+                      client.clearMetrics();
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: metrics.isEmpty
+                  ? const Center(child: Text('No API calls recorded yet.'))
+                  : ListView.separated(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: metrics.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        // Show newest first.
+                        final m = metrics[metrics.length - 1 - i];
+                        final color = m.statusCode == 200
+                            ? Colors.green
+                            : (m.error != null ? Colors.red : Colors.orange);
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(Icons.circle, color: color, size: 12),
+                          title: Text(
+                            '${m.operation}  ${m.totalDuration.toStringAsFixed(0)}ms',
+                            style: const TextStyle(
+                                fontFamily: 'monospace', fontSize: 13),
+                          ),
+                          subtitle: Text(
+                            '${m.method} ${m.statusCode} · '
+                            'req ${m.requestBodySize}B · res ${m.responseBodySize}B\n'
+                            '${m.startedAt.toIso8601String()}',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -154,6 +251,11 @@ class _AppShellState extends State<AppShell> {
                                 .currentState
                                 ?.reloadCurrentTab(),
                           ),
+                        IconButton(
+                          icon: const Icon(Icons.speed_outlined),
+                          tooltip: 'API Metrics',
+                          onPressed: () => _showApiMetricsSheet(context),
+                        ),
                         IconButton(
                           icon: const Icon(Icons.bug_report_outlined),
                           tooltip: 'Debug Log',
@@ -288,6 +390,7 @@ class _AuthenticatedBody extends StatefulWidget {
 
 class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
   KiroApi? _api;
+  InstrumentedHttpClient? _httpClient;
   final _chatsKey = GlobalKey<ChatsTabState>();
   final _tasksKey = GlobalKey<TasksTabState>();
 
@@ -296,9 +399,13 @@ class _AuthenticatedBodyState extends State<_AuthenticatedBody> {
     super.initState();
     final credentials = widget.authManager.credentials;
     if (credentials != null) {
-      _api = KiroApi(credentials: credentials);
+      _httpClient = InstrumentedHttpClient();
+      _api = KiroApi(credentials: credentials, httpClient: _httpClient);
     }
   }
+
+  /// Exposes the instrumented client so the debug sheet can read metrics.
+  InstrumentedHttpClient? get httpClient => _httpClient;
 
   void reloadCurrentTab() {
     switch (widget.currentIndex) {
