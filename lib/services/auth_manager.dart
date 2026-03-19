@@ -216,19 +216,53 @@ class AuthManager extends ChangeNotifier {
       try {
         DebugLog.log('extractCredentials: calling GetToken endpoint');
 
-        // The GetToken endpoint returns CBOR. We fetch the raw bytes,
-        // base64-encode them in JS, and decode on the Dart side to
-        // extract the `aoa...` access token. This avoids issues with
-        // non-printable CBOR framing bytes breaking regex matches in JS.
+        // The GetToken endpoint requires CBOR request/response (Smithy
+        // rpc-v2-cbor protocol). We construct the CBOR request body
+        // manually in JS — it's a simple map: {"csrfToken": "<value>"}.
         //
-        // We store three pipe-separated values in _kiroAuthResult:
-        //   status|base64EncodedBody|csrfToken
-        // This avoids JSON serialization issues where iOS strips quotes.
+        // CBOR encoding for {"csrfToken": "<token>"}:
+        //   0xA1 = map with 1 entry
+        //   0x69 = text string of length 9 ("csrfToken")
+        //   0x78 0xNN = text string of length NN (the token value)
         await controller.runJavaScript('''
           window._kiroAuthResult = null;
           (async function() {
             try {
               var csrfToken = ${csrfToken != null ? 'window._kiroCsrfResult || ""' : '""'};
+
+              // Build CBOR body: map(1) { "csrfToken": csrfToken }
+              var key = "csrfToken";
+              var val = csrfToken;
+              var keyBytes = new TextEncoder().encode(key);
+              var valBytes = new TextEncoder().encode(val);
+
+              // Calculate total size
+              var parts = [];
+              // Map header: 1 item
+              parts.push(0xA1);
+              // Key: text string
+              if (keyBytes.length < 24) {
+                parts.push(0x60 + keyBytes.length);
+              } else {
+                parts.push(0x78);
+                parts.push(keyBytes.length);
+              }
+              for (var i = 0; i < keyBytes.length; i++) parts.push(keyBytes[i]);
+              // Value: text string
+              if (valBytes.length < 24) {
+                parts.push(0x60 + valBytes.length);
+              } else if (valBytes.length < 256) {
+                parts.push(0x78);
+                parts.push(valBytes.length);
+              } else {
+                parts.push(0x79);
+                parts.push((valBytes.length >> 8) & 0xFF);
+                parts.push(valBytes.length & 0xFF);
+              }
+              for (var i = 0; i < valBytes.length; i++) parts.push(valBytes[i]);
+
+              var body = new Uint8Array(parts);
+
               var resp = await fetch(
                 '/service/KiroWebPortalService/operation/GetToken',
                 {
@@ -236,11 +270,11 @@ class AuthManager extends ChangeNotifier {
                   credentials: 'include',
                   headers: {
                     'accept': 'application/cbor',
-                    'content-type': 'application/json',
+                    'content-type': 'application/cbor',
                     'smithy-protocol': 'rpc-v2-cbor',
                     'x-csrf-token': csrfToken
                   },
-                  body: JSON.stringify({csrfToken: csrfToken})
+                  body: body.buffer
                 }
               );
               var status = resp.status;
