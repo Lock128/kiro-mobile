@@ -151,8 +151,13 @@ class SignInViewState extends State<SignInView> {
         _signInCompleteTriggered = true;
         _urlPollTimer?.cancel();
         DebugLog.log('SignInView: triggering handleSignInComplete');
-        final authManager = context.read<AuthManager>();
-        authManager.handleSignInComplete(_controller);
+        // Give the page a moment to finish loading and set cookies
+        // before attempting credential extraction.
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!mounted) return;
+          final authManager = context.read<AuthManager>();
+          authManager.handleSignInComplete(_controller);
+        });
       }
     }
   }
@@ -218,9 +223,16 @@ class SignInViewState extends State<SignInView> {
               ),
             ),
 
-          // Loading indicator
+          // Loading indicator — use an opaque background so the WebView's
+          // own loading spinner doesn't show through, avoiding two visible
+          // spinners at the same time.
           if (_isLoading && _errorMessage == null)
-            const Center(child: CircularProgressIndicator()),
+            Positioned.fill(
+              child: ColoredBox(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+            ),
 
           // Floating re-auth button when stuck on the Kiro web page
           if (_hasNavigatedPastSignIn && !_isLoading && _errorMessage == null)

@@ -164,36 +164,26 @@ class AuthManager extends ChangeNotifier {
   /// If that succeeds we have everything we need. Only fall back to
   /// reading `document.cookie` via JS if GetToken fails.
   ///
-  /// Uses a [JavaScriptChannel] message bridge instead of
-  /// [runJavaScriptReturningResult] for the async GetToken call because
-  /// iOS WKWebView cannot resolve Promises returned by async IIFEs —
-  /// it throws `FWFEvaluateJavaScriptError`.
+  /// Uses a fire-and-poll pattern instead of [runJavaScriptReturningResult]
+  /// for the async GetToken call because iOS WKWebView cannot resolve
+  /// Promises returned by async IIFEs — it throws
+  /// `FWFEvaluateJavaScriptError`. The async JS stores its result in a
+  /// global variable (`window._kiroAuthResult`) which we then poll for
+  /// synchronously.
   Future<AuthCredentials?> extractCredentials(
       WebViewController controller) async {
     try {
-      // ── 1. Try GetToken endpoint via JS channel (primary path) ──
-      // We use a Completer + JavaScriptChannel so the async fetch inside
-      // the WebView can post its result back without relying on
-      // runJavaScriptReturningResult to resolve a Promise.
+      // ── 1. Try GetToken endpoint via fire-and-poll (primary path) ──
       String? bearerToken;
       String? csrfToken;
       try {
         DebugLog.log('extractCredentials: calling GetToken endpoint');
-        final completer = Completer<String>();
 
-        // Register a temporary channel to receive the result.
-        await controller.addJavaScriptChannel(
-          '_KiroAuthChannel',
-          onMessageReceived: (JavaScriptMessage message) {
-            if (!completer.isCompleted) {
-              completer.complete(message.message);
-            }
-          },
-        );
-
-        // Fire-and-forget: the async JS posts its result to the channel.
+        // Clear any previous result and kick off the async fetch.
+        // runJavaScript is fire-and-forget — no Promise resolution needed.
         await controller.runJavaScript(
           '''
+          window._kiroAuthResult = null;
           (async function() {
             try {
               var resp = await fetch(
@@ -212,59 +202,68 @@ class AuthManager extends ChangeNotifier {
               var text = await resp.text();
               try {
                 var data = JSON.parse(text);
-                _KiroAuthChannel.postMessage(JSON.stringify({
+                window._kiroAuthResult = JSON.stringify({
                   status: status,
                   accessToken: data.accessToken || '',
                   csrfToken: data.csrfToken || ''
-                }));
+                });
               } catch(e) {
                 var match = text.match(/aoa[A-Za-z0-9+\\\\/=:]+/);
-                _KiroAuthChannel.postMessage(JSON.stringify({
+                window._kiroAuthResult = JSON.stringify({
                   status: status,
                   accessToken: match ? match[0] : '',
                   csrfToken: '',
                   parseError: e.toString()
-                }));
+                });
               }
             } catch(e) {
-              _KiroAuthChannel.postMessage(JSON.stringify({
+              window._kiroAuthResult = JSON.stringify({
                 status: 0, accessToken: '', csrfToken: '',
                 fetchError: e.toString()
-              }));
+              });
             }
           })();
           ''',
         );
 
-        // Wait for the channel message with a timeout.
-        final parsed = await completer.future.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () => '{"status":0,"accessToken":"","csrfToken":"","timeout":true}',
-        );
-        DebugLog.log('extractCredentials: GetToken raw result: $parsed');
-
-        // Clean up the channel.
-        await controller.removeJavaScriptChannel('_KiroAuthChannel');
-
-        try {
-          if (parsed.startsWith('{')) {
-            final map = Map<String, dynamic>.from(_parseSimpleJson(parsed));
-            final at = map['accessToken'] as String? ?? '';
-            final ct = map['csrfToken'] as String? ?? '';
-            if (at.isNotEmpty) bearerToken = at;
-            if (ct.isNotEmpty) csrfToken = ct;
-            DebugLog.log('extractCredentials: GetToken status=${map['status']}, '
-                'accessToken=${at.isNotEmpty}, csrfToken=${ct.isNotEmpty}');
+        // Poll for the result — the fetch typically completes in <2s.
+        String? parsed;
+        for (var i = 0; i < 20; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          try {
+            final result = await controller.runJavaScriptReturningResult(
+              'window._kiroAuthResult || ""',
+            );
+            final raw = result.toString().replaceAll('"', '');
+            if (raw.isNotEmpty) {
+              parsed = raw;
+              break;
+            }
+          } catch (e) {
+            DebugLog.log('extractCredentials: poll error: $e');
           }
-        } catch (e) {
-          DebugLog.log('extractCredentials: GetToken parse error: $e');
+        }
+
+        if (parsed == null || parsed.isEmpty) {
+          DebugLog.log('extractCredentials: GetToken poll timed out');
+        } else {
+          DebugLog.log('extractCredentials: GetToken raw result: $parsed');
+          try {
+            if (parsed.startsWith('{')) {
+              final map = Map<String, dynamic>.from(_parseSimpleJson(parsed));
+              final at = map['accessToken'] as String? ?? '';
+              final ct = map['csrfToken'] as String? ?? '';
+              if (at.isNotEmpty) bearerToken = at;
+              if (ct.isNotEmpty) csrfToken = ct;
+              DebugLog.log('extractCredentials: GetToken status=${map['status']}, '
+                  'accessToken=${at.isNotEmpty}, csrfToken=${ct.isNotEmpty}');
+            }
+          } catch (e) {
+            DebugLog.log('extractCredentials: GetToken parse error: $e');
+          }
         }
       } catch (e) {
         DebugLog.log('extractCredentials: GetToken call failed: $e');
-        // Clean up channel on error.
-        try {
-          await controller.removeJavaScriptChannel('_KiroAuthChannel');
-        } catch (_) {}
       }
 
       // ── 2. Read cookies via JS (may be empty on iOS for HttpOnly) ──
