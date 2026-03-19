@@ -163,17 +163,36 @@ class AuthManager extends ChangeNotifier {
   /// (same-origin, so cookies are sent automatically even if HttpOnly).
   /// If that succeeds we have everything we need. Only fall back to
   /// reading `document.cookie` via JS if GetToken fails.
+  ///
+  /// Uses a [JavaScriptChannel] message bridge instead of
+  /// [runJavaScriptReturningResult] for the async GetToken call because
+  /// iOS WKWebView cannot resolve Promises returned by async IIFEs —
+  /// it throws `FWFEvaluateJavaScriptError`.
   Future<AuthCredentials?> extractCredentials(
       WebViewController controller) async {
     try {
-      // ── 1. Try GetToken endpoint (primary path) ──────────────
-      // This works on iOS even when cookies are HttpOnly because the
-      // fetch runs inside the WebView with same-origin credentials.
+      // ── 1. Try GetToken endpoint via JS channel (primary path) ──
+      // We use a Completer + JavaScriptChannel so the async fetch inside
+      // the WebView can post its result back without relying on
+      // runJavaScriptReturningResult to resolve a Promise.
       String? bearerToken;
       String? csrfToken;
       try {
         DebugLog.log('extractCredentials: calling GetToken endpoint');
-        final tokenResult = await controller.runJavaScriptReturningResult(
+        final completer = Completer<String>();
+
+        // Register a temporary channel to receive the result.
+        await controller.addJavaScriptChannel(
+          '_KiroAuthChannel',
+          onMessageReceived: (JavaScriptMessage message) {
+            if (!completer.isCompleted) {
+              completer.complete(message.message);
+            }
+          },
+        );
+
+        // Fire-and-forget: the async JS posts its result to the channel.
+        await controller.runJavaScript(
           '''
           (async function() {
             try {
@@ -193,28 +212,40 @@ class AuthManager extends ChangeNotifier {
               var text = await resp.text();
               try {
                 var data = JSON.parse(text);
-                return JSON.stringify({
+                _KiroAuthChannel.postMessage(JSON.stringify({
                   status: status,
                   accessToken: data.accessToken || '',
                   csrfToken: data.csrfToken || ''
-                });
+                }));
               } catch(e) {
                 var match = text.match(/aoa[A-Za-z0-9+\\\\/=:]+/);
-                return JSON.stringify({
+                _KiroAuthChannel.postMessage(JSON.stringify({
                   status: status,
                   accessToken: match ? match[0] : '',
                   csrfToken: '',
                   parseError: e.toString()
-                });
+                }));
               }
             } catch(e) {
-              return JSON.stringify({status: 0, accessToken: '', csrfToken: '', fetchError: e.toString()});
+              _KiroAuthChannel.postMessage(JSON.stringify({
+                status: 0, accessToken: '', csrfToken: '',
+                fetchError: e.toString()
+              }));
             }
-          })()
+          })();
           ''',
         );
-        final parsed = tokenResult.toString().replaceAll('"', '');
+
+        // Wait for the channel message with a timeout.
+        final parsed = await completer.future.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => '{"status":0,"accessToken":"","csrfToken":"","timeout":true}',
+        );
         DebugLog.log('extractCredentials: GetToken raw result: $parsed');
+
+        // Clean up the channel.
+        await controller.removeJavaScriptChannel('_KiroAuthChannel');
+
         try {
           if (parsed.startsWith('{')) {
             final map = Map<String, dynamic>.from(_parseSimpleJson(parsed));
@@ -230,6 +261,10 @@ class AuthManager extends ChangeNotifier {
         }
       } catch (e) {
         DebugLog.log('extractCredentials: GetToken call failed: $e');
+        // Clean up channel on error.
+        try {
+          await controller.removeJavaScriptChannel('_KiroAuthChannel');
+        } catch (_) {}
       }
 
       // ── 2. Read cookies via JS (may be empty on iOS for HttpOnly) ──
