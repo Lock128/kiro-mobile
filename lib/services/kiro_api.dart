@@ -81,44 +81,87 @@ class KiroApi {
     return _connectionId!;
   }
 
-  /// Fetches the list of chat sessions.
-  Future<List<ChatSession>> listSessions({int maxResults = 50}) async {
+  /// Fetches all chat sessions (handles pagination).
+  /// Caps at [maxPages] pages to prevent runaway loops.
+  Future<List<ChatSession>> listSessions({
+    int maxResults = 50,
+    int maxPages = 20,
+  }) async {
     final instanceId = await _getInstanceId();
-    final response = await _client.post(
-      Uri.parse('$_baseUrl/listSessions'),
-      headers: _headers,
-      body: jsonEncode({
+    final allSessions = <ChatSession>[];
+    String? nextToken;
+    var page = 0;
+
+    do {
+      final body = <String, dynamic>{
         'instanceId': instanceId,
         'maxResults': maxResults,
         'profileArn': _profileArn,
-      }),
-    );
-    _checkResponse(response, 'listSessions');
+      };
+      if (nextToken != null) body['nextToken'] = nextToken;
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return (data['sessions'] as List? ?? [])
-        .map((e) => ChatSession.fromJson(e as Map<String, dynamic>))
-        .toList();
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/listSessions'),
+        headers: _headers,
+        body: jsonEncode(body),
+      );
+      _checkResponse(response, 'listSessions');
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final prevToken = nextToken;
+      nextToken = data['nextToken'] as String?;
+      // Guard against the API returning the same token repeatedly.
+      if (nextToken == prevToken) break;
+
+      final sessions = data['sessions'] as List? ?? [];
+      for (final e in sessions) {
+        allSessions.add(ChatSession.fromJson(e as Map<String, dynamic>));
+      }
+      page++;
+    } while (nextToken != null && page < maxPages);
+
+    return allSessions;
   }
 
-  /// Fetches the list of agent tasks.
-  Future<List<AgentTask>> listAgentTasks({int maxResults = 50}) async {
+  /// Fetches all agent tasks (handles pagination).
+  /// Caps at [maxPages] pages to prevent runaway loops.
+  Future<List<AgentTask>> listAgentTasks({
+    int maxResults = 50,
+    int maxPages = 20,
+  }) async {
     final instanceId = await _getInstanceId();
-    final response = await _client.post(
-      Uri.parse('$_baseUrl/listAgentTasks'),
-      headers: _headers,
-      body: jsonEncode({
+    final allTasks = <AgentTask>[];
+    String? nextToken;
+    var page = 0;
+
+    do {
+      final body = <String, dynamic>{
         'instanceId': instanceId,
         'maxResults': maxResults,
         'profileArn': _profileArn,
-      }),
-    );
-    _checkResponse(response, 'listAgentTasks');
+      };
+      if (nextToken != null) body['nextToken'] = nextToken;
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return (data['items'] as List? ?? [])
-        .map((e) => AgentTask.fromJson(e as Map<String, dynamic>))
-        .toList();
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/listAgentTasks'),
+        headers: _headers,
+        body: jsonEncode(body),
+      );
+      _checkResponse(response, 'listAgentTasks');
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final prevToken = nextToken;
+      nextToken = data['nextToken'] as String?;
+      if (nextToken == prevToken) break;
+
+      final items = data['items'] as List? ?? [];
+      for (final e in items) {
+        allTasks.add(AgentTask.fromJson(e as Map<String, dynamic>));
+      }
+      page++;
+    } while (nextToken != null && page < maxPages);
+
+    return allTasks;
   }
 
   /// Fetches all repositories the user has access to (handles pagination).
@@ -345,6 +388,7 @@ class AgentTask {
     this.sourceProvider,
     this.createdTime,
     this.lastUpdatedTime,
+    this.providerResources,
   });
 
   final String taskId;
@@ -354,6 +398,7 @@ class AgentTask {
   final String? sourceProvider;
   final DateTime? createdTime;
   final DateTime? lastUpdatedTime;
+  final List<Map<String, dynamic>>? providerResources;
 
   factory AgentTask.fromJson(Map<String, dynamic> json) => AgentTask(
         taskId: json['taskId'] as String? ?? '',
@@ -363,6 +408,9 @@ class AgentTask {
         sourceProvider: json['sourceProvider'] as String?,
         createdTime: _tryParseEpoch(json['createdTime']),
         lastUpdatedTime: _tryParseEpoch(json['lastUpdatedTime']),
+        providerResources: (json['providerResources'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList(),
       );
 }
 

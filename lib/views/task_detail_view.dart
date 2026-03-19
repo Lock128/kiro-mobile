@@ -79,7 +79,11 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   }
 
   String _repoLabel() {
-    final res = widget.session?.providerResources;
+    // Prefer providerResources directly on the task if available.
+    var res = widget.task.providerResources;
+    if (res == null || res.isEmpty) {
+      res = widget.session?.providerResources;
+    }
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
     final gh = res.first['github'] as Map<String, dynamic>?;

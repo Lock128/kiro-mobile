@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_manager.dart';
+import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
 import 'session_detail_view.dart';
 import 'task_detail_view.dart';
@@ -324,6 +325,10 @@ class ChatsTab extends StatefulWidget {
 
 class ChatsTabState extends State<ChatsTab> {
   late Future<List<ChatSession>> _future;
+  String _sortColumn = 'updated';
+  bool _sortAscending = false; // descending by default
+  String _searchQuery = '';
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -331,9 +336,17 @@ class ChatsTabState extends State<ChatsTab> {
     _future = widget.api.listSessions();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void reload() {
     final f = widget.api.listSessions();
-    setState(() => _future = f);
+    setState(() {
+      _future = f;
+    });
   }
 
   String _repoLabel(ChatSession s) {
@@ -348,12 +361,53 @@ class ChatsTabState extends State<ChatsTab> {
     return name;
   }
 
+  void _onSort(String column) {
+    setState(() {
+      if (_sortColumn == column) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortColumn = column;
+        _sortAscending = column == 'name'; // default asc for name, desc for dates
+      }
+    });
+  }
+
+  List<ChatSession> _sortAndFilter(List<ChatSession> sessions) {
+    var result = sessions.toList();
+
+    // Filter
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      result = result.where((s) {
+        final name = s.displayName.toLowerCase();
+        final repo = _repoLabel(s).toLowerCase();
+        return name.contains(q) || repo.contains(q);
+      }).toList();
+    }
+
+    // Sort
+    result.sort((a, b) {
+      int cmp;
+      switch (_sortColumn) {
+        case 'name':
+          cmp = a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+        case 'repository':
+          cmp = _repoLabel(a).toLowerCase().compareTo(_repoLabel(b).toLowerCase());
+        case 'created':
+          cmp = (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0));
+        case 'updated':
+        default:
+          cmp = (a.lastUpdatedAt ?? DateTime(0)).compareTo(b.lastUpdatedAt ?? DateTime(0));
+      }
+      return _sortAscending ? cmp : -cmp;
+    });
+
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final headerStyle = theme.textTheme.labelSmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-    );
 
     return FutureBuilder<List<ChatSession>>(
       future: _future,
@@ -377,10 +431,12 @@ class ChatsTabState extends State<ChatsTab> {
           );
         }
 
-        final sessions = snapshot.data ?? [];
-        if (sessions.isEmpty) {
+        final allSessions = snapshot.data ?? [];
+        if (allSessions.isEmpty) {
           return const Center(child: Text('No chats yet.'));
         }
+
+        final sessions = _sortAndFilter(allSessions);
 
         return RefreshIndicator(
           onRefresh: () async {
@@ -392,119 +448,139 @@ class ChatsTabState extends State<ChatsTab> {
             physics: const AlwaysScrollableScrollPhysics(),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Table(
-                columnWidths: const {
-                  0: FlexColumnWidth(3), // Name
-                  1: FixedColumnWidth(48), // Has task
-                  2: FlexColumnWidth(2), // Repository
-                  3: FlexColumnWidth(1.2), // Created
-                  4: FlexColumnWidth(1.2), // Updated
-                },
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              child: Column(
                 children: [
-                  // Header row
-                  TableRow(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: theme.colorScheme.outlineVariant,
-                        ),
-                      ),
-                    ),
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Name', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Tooltip(
-                          message: 'Has task',
-                          child: Icon(Icons.task_alt,
-                              size: 16,
-                              color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Repository', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Created', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Updated', style: headerStyle),
-                      ),
-                    ],
+                  _SearchBar(
+                    controller: _searchController,
+                    hintText: 'Search by name or repository…',
+                    onChanged: (value) => setState(() => _searchQuery = value),
                   ),
-                  // Data rows
-                  for (final s in sessions)
-                    TableRow(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color:
-                                theme.colorScheme.outlineVariant.withAlpha(80),
-                          ),
-                        ),
-                      ),
-                      children: [
-                        _TableCell(
-                          child: InkWell(
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => SessionDetailView(
-                                    api: widget.api,
-                                    sessionId: s.sessionId,
-                                  ),
-                                ),
-                              );
-                            },
-                            child: Text(
-                              s.displayName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.primary,
-                              ),
+                  const SizedBox(height: 8),
+                  Table(
+                    columnWidths: const {
+                      0: FlexColumnWidth(3),
+                      1: FixedColumnWidth(48),
+                      2: FlexColumnWidth(2),
+                      3: FlexColumnWidth(1.2),
+                      4: FlexColumnWidth(1.2),
+                    },
+                    defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                    children: [
+                      TableRow(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: theme.colorScheme.outlineVariant,
                             ),
                           ),
                         ),
-                        _TableCell(
-                          child: s.isTask
-                              ? Icon(Icons.check,
-                                  size: 18,
-                                  color: theme.colorScheme.onSurfaceVariant)
-                              : const SizedBox.shrink(),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            _repoLabel(s),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
+                        children: [
+                          _SortableHeader(
+                            label: 'Name',
+                            column: 'name',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            s.createdAt != null
-                                ? _formatDate(s.createdAt!)
-                                : '',
-                            style: theme.textTheme.bodySmall,
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Tooltip(
+                              message: 'Has task',
+                              child: Icon(Icons.task_alt,
+                                  size: 16,
+                                  color: theme.colorScheme.onSurfaceVariant),
+                            ),
                           ),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            s.lastUpdatedAt != null
-                                ? _formatDate(s.lastUpdatedAt!)
-                                : '',
-                            style: theme.textTheme.bodySmall,
+                          _SortableHeader(
+                            label: 'Repository',
+                            column: 'repository',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
+                          _SortableHeader(
+                            label: 'Created',
+                            column: 'created',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
+                          ),
+                          _SortableHeader(
+                            label: 'Updated',
+                            column: 'updated',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
+                          ),
+                        ],
+                      ),
+                      for (final s in sessions)
+                        TableRow(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: theme.colorScheme.outlineVariant.withAlpha(80),
+                              ),
+                            ),
+                          ),
+                          children: [
+                            _TableCell(
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => SessionDetailView(
+                                        api: widget.api,
+                                        sessionId: s.sessionId,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Text(
+                                  s.displayName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            _TableCell(
+                              child: s.isTask
+                                  ? Icon(Icons.check,
+                                      size: 18,
+                                      color: theme.colorScheme.onSurfaceVariant)
+                                  : const SizedBox.shrink(),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                _repoLabel(s),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                s.createdAt != null ? _formatDate(s.createdAt!) : '',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                s.lastUpdatedAt != null ? _formatDate(s.lastUpdatedAt!) : '',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                    ],
+                  ),
+                  if (sessions.isEmpty && _searchQuery.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No chats match your search.'),
                     ),
                 ],
               ),
@@ -541,6 +617,10 @@ class TasksTab extends StatefulWidget {
 
 class TasksTabState extends State<TasksTab> {
   late Future<_TasksData> _future;
+  String _sortColumn = 'updated';
+  bool _sortAscending = false; // descending by default
+  String _searchQuery = '';
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -548,25 +628,36 @@ class TasksTabState extends State<TasksTab> {
     _future = _loadTasks();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void reload() {
     final f = _loadTasks();
-    setState(() => _future = f);
+    setState(() {
+      _future = f;
+    });
   }
 
   Future<_TasksData> _loadTasks() async {
-    // Fetch tasks and sessions in parallel so we can map taskId → repo info.
     final results = await Future.wait([
       widget.api.listAgentTasks(),
       widget.api.listSessions(),
     ]);
     final tasks = results[0] as List<AgentTask>;
     final sessions = results[1] as List<ChatSession>;
-    // Build a taskId → session lookup for repo info.
     final sessionByTaskId = <String, ChatSession>{};
     for (final s in sessions) {
       if (s.taskId != null && s.taskId!.isNotEmpty) {
         sessionByTaskId[s.taskId!] = s;
       }
+    }
+    DebugLog.log('_loadTasks: ${tasks.length} tasks, ${sessions.length} sessions, ${sessionByTaskId.length} mapped');
+    for (final t in tasks.take(3)) {
+      final matched = sessionByTaskId.containsKey(t.taskId);
+      DebugLog.log('  task "${t.taskId}" matched=$matched');
     }
     return _TasksData(tasks: tasks, sessionByTaskId: sessionByTaskId);
   }
@@ -585,9 +676,14 @@ class TasksTabState extends State<TasksTab> {
   }
 
   String _repoLabel(AgentTask task, Map<String, ChatSession> sessionByTaskId) {
-    final session = sessionByTaskId[task.taskId];
-    if (session == null) return '';
-    final res = session.providerResources;
+    // Prefer providerResources directly on the task if available.
+    var res = task.providerResources;
+    // Fall back to the session lookup.
+    if (res == null || res.isEmpty) {
+      final session = sessionByTaskId[task.taskId];
+      if (session == null) return '';
+      res = session.providerResources;
+    }
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
     final gh = res.first['github'] as Map<String, dynamic>?;
@@ -601,7 +697,6 @@ class TasksTabState extends State<TasksTab> {
   String _sourceLabel(AgentTask task) {
     final src = task.sourceProvider;
     if (src == null || src.isEmpty) return '';
-    // "BIGWEAVER_CHAT_SESSION" → "Kiro"
     if (src.contains('BIGWEAVER')) return 'Kiro';
     return src;
   }
@@ -623,7 +718,6 @@ class TasksTabState extends State<TasksTab> {
       color = theme.colorScheme.onSurfaceVariant;
       icon = Icons.circle_outlined;
     }
-    // Title-case the label.
     final display = label
         .replaceAll('_', ' ')
         .split(' ')
@@ -642,12 +736,54 @@ class TasksTabState extends State<TasksTab> {
     );
   }
 
+  void _onSort(String column) {
+    setState(() {
+      if (_sortColumn == column) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortColumn = column;
+        _sortAscending = column == 'name';
+      }
+    });
+  }
+
+  List<AgentTask> _sortAndFilter(List<AgentTask> tasks, Map<String, ChatSession> sessionMap) {
+    var result = tasks.toList();
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      result = result.where((t) {
+        final name = (t.name ?? '').toLowerCase();
+        final repo = _repoLabel(t, sessionMap).toLowerCase();
+        return name.contains(q) || repo.contains(q);
+      }).toList();
+    }
+
+    result.sort((a, b) {
+      int cmp;
+      switch (_sortColumn) {
+        case 'name':
+          cmp = (a.name ?? '').toLowerCase().compareTo((b.name ?? '').toLowerCase());
+        case 'status':
+          cmp = (a.status ?? '').compareTo(b.status ?? '');
+        case 'repository':
+          cmp = _repoLabel(a, sessionMap).toLowerCase().compareTo(
+              _repoLabel(b, sessionMap).toLowerCase());
+        case 'created':
+          cmp = (a.createdTime ?? DateTime(0)).compareTo(b.createdTime ?? DateTime(0));
+        case 'updated':
+        default:
+          cmp = (a.lastUpdatedTime ?? DateTime(0)).compareTo(b.lastUpdatedTime ?? DateTime(0));
+      }
+      return _sortAscending ? cmp : -cmp;
+    });
+
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final headerStyle = theme.textTheme.labelSmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-    );
 
     return FutureBuilder<_TasksData>(
       future: _future,
@@ -672,12 +808,14 @@ class TasksTabState extends State<TasksTab> {
         }
 
         final data = snapshot.data!;
-        final tasks = data.tasks;
+        final allTasks = data.tasks;
         final sessionMap = data.sessionByTaskId;
 
-        if (tasks.isEmpty) {
+        if (allTasks.isEmpty) {
           return const Center(child: Text('No tasks yet.'));
         }
+
+        final tasks = _sortAndFilter(allTasks, sessionMap);
 
         return RefreshIndicator(
           onRefresh: () async {
@@ -689,110 +827,140 @@ class TasksTabState extends State<TasksTab> {
             physics: const AlwaysScrollableScrollPhysics(),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Table(
-                columnWidths: const {
-                  0: FlexColumnWidth(2.5), // Name
-                  1: FlexColumnWidth(1.5), // Status
-                  2: FlexColumnWidth(2), // Repository
-                  3: FixedColumnWidth(48), // Source
-                  4: FlexColumnWidth(1.2), // Created
-                  5: FlexColumnWidth(1.2), // Updated
-                },
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              child: Column(
                 children: [
-                  // Header row
-                  TableRow(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: theme.colorScheme.outlineVariant,
-                        ),
-                      ),
-                    ),
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Name', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Task status', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Repository', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Source', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Created', style: headerStyle),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text('Updated', style: headerStyle),
-                      ),
-                    ],
+                  _SearchBar(
+                    controller: _searchController,
+                    hintText: 'Search by name or repository…',
+                    onChanged: (value) => setState(() => _searchQuery = value),
                   ),
-                  // Data rows
-                  for (final t in tasks)
-                    TableRow(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color:
-                                theme.colorScheme.outlineVariant.withAlpha(80),
-                          ),
-                        ),
-                      ),
-                      children: [
-                        _TableCell(
-                          child: InkWell(
-                            onTap: () => _openTask(t, sessionMap),
-                            child: Text(
-                              t.name ?? 'Untitled task',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.primary,
-                              ),
+                  const SizedBox(height: 8),
+                  Table(
+                    columnWidths: const {
+                      0: FlexColumnWidth(2.5),
+                      1: FlexColumnWidth(1.5),
+                      2: FlexColumnWidth(2),
+                      3: FixedColumnWidth(48),
+                      4: FlexColumnWidth(1.2),
+                      5: FlexColumnWidth(1.2),
+                    },
+                    defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                    children: [
+                      TableRow(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: theme.colorScheme.outlineVariant,
                             ),
                           ),
                         ),
-                        _TableCell(child: _statusChip(t.status, theme)),
-                        _TableCell(
-                          child: Text(
-                            _repoLabel(t, sessionMap),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
+                        children: [
+                          _SortableHeader(
+                            label: 'Name',
+                            column: 'name',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            _sourceLabel(t),
-                            style: theme.textTheme.bodySmall,
+                          _SortableHeader(
+                            label: 'Task status',
+                            column: 'status',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            t.createdTime != null
-                                ? _formatDate(t.createdTime!)
-                                : '',
-                            style: theme.textTheme.bodySmall,
+                          _SortableHeader(
+                            label: 'Repository',
+                            column: 'repository',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
-                        ),
-                        _TableCell(
-                          child: Text(
-                            t.lastUpdatedTime != null
-                                ? _formatDate(t.lastUpdatedTime!)
-                                : '',
-                            style: theme.textTheme.bodySmall,
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Text('Source',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                )),
                           ),
+                          _SortableHeader(
+                            label: 'Created',
+                            column: 'created',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
+                          ),
+                          _SortableHeader(
+                            label: 'Updated',
+                            column: 'updated',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
+                          ),
+                        ],
+                      ),
+                      for (final t in tasks)
+                        TableRow(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: theme.colorScheme.outlineVariant.withAlpha(80),
+                              ),
+                            ),
+                          ),
+                          children: [
+                            _TableCell(
+                              child: InkWell(
+                                onTap: () => _openTask(t, sessionMap),
+                                child: Text(
+                                  t.name ?? 'Untitled task',
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            _TableCell(child: _statusChip(t.status, theme)),
+                            _TableCell(
+                              child: Text(
+                                _repoLabel(t, sessionMap),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                _sourceLabel(t),
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                t.createdTime != null
+                                    ? _formatDate(t.createdTime!)
+                                    : '',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            _TableCell(
+                              child: Text(
+                                t.lastUpdatedTime != null
+                                    ? _formatDate(t.lastUpdatedTime!)
+                                    : '',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                    ],
+                  ),
+                  if (tasks.isEmpty && _searchQuery.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('No tasks match your search.'),
                     ),
                 ],
               ),
@@ -811,6 +979,94 @@ class _TasksData {
 }
 
 // ─── Shared ──────────────────────────────────────────────────────────────────
+
+class _SortableHeader extends StatelessWidget {
+  const _SortableHeader({
+    required this.label,
+    required this.column,
+    required this.currentColumn,
+    required this.ascending,
+    required this.onTap,
+  });
+
+  final String label;
+  final String column;
+  final String currentColumn;
+  final bool ascending;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isActive = currentColumn == column;
+
+    return InkWell(
+      onTap: () => onTap(column),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: isActive
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (isActive) ...[
+              const SizedBox(width: 2),
+              Icon(
+                ascending ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 14,
+                color: theme.colorScheme.primary,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchBar extends StatelessWidget {
+  const _SearchBar({
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        hintText: hintText,
+        prefixIcon: const Icon(Icons.search, size: 20),
+        suffixIcon: controller.text.isNotEmpty
+            ? IconButton(
+                icon: const Icon(Icons.clear, size: 18),
+                onPressed: () {
+                  controller.clear();
+                  onChanged('');
+                },
+              )
+            : null,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+}
 
 class _ErrorRetry extends StatelessWidget {
   const _ErrorRetry({required this.message, required this.onRetry});
