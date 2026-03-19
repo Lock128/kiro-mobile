@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 
 import 'debug_log_share.dart'
     if (dart.library.js_interop) 'debug_log_share_web.dart' as share_impl;
+import 'telemetry_service.dart';
 
 /// Simple in-memory debug log for on-device diagnostics.
 ///
@@ -13,6 +15,9 @@ class DebugLog {
   static const int _maxEntries = 2000;
 
   static final List<String> _entries = [];
+
+  /// Optional telemetry service for forwarding log entries to OTel.
+  static TelemetryService? telemetryService;
 
   /// All recorded log entries.
   static List<String> get entries => List.unmodifiable(_entries);
@@ -26,6 +31,18 @@ class DebugLog {
       _entries.removeRange(0, _entries.length - _maxEntries);
     }
     debugPrint('[DebugLog] $message');
+
+    // Forward to OpenTelemetry if configured.
+    final tracer = telemetryService?.tracer;
+    if (tracer != null) {
+      try {
+        final attrs = <String, Object>{'log.message': message}.toAttributes();
+        final span = tracer.startSpan('debug_log', attributes: attrs);
+        span.end();
+      } catch (_) {
+        // Telemetry must never break the app.
+      }
+    }
   }
 
   /// Clears all entries.

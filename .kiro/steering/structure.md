@@ -16,6 +16,8 @@ lib/
     secure_credential_store.dart       # flutter_secure_storage impl
     web_credential_store.dart          # Browser localStorage impl
     kiro_api.dart           # HTTP client for Kiro backend
+    telemetry_service.dart  # OpenTelemetry service abstraction + implementation
+    telemetry_config.dart   # OTel configuration via compile-time env vars
     debug_log.dart          # Debug logging utility
   views/                    # UI layer (StatefulWidget / StatelessWidget)
     app_shell.dart          # Root scaffold with NavigationBar and auth routing
