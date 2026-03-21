@@ -1,0 +1,38 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create three GitHub Actions workflow files for CI/CD: a CI pipeline (ci.yml), a promotion/staging deployment workflow (promotion.yml), and a production deployment workflow (production.yml). All deployment workflows should output CDK exports (URLs, API keys, endpoints) to the GitHub Actions job summary.",
+  "status": "completed",
+  "steps": [
+    "Create the .github/workflows/ directory structure.",
+
+    "Create .github/workflows/ci.yml - CI pipeline workflow triggered on pull requests and pushes to main. Jobs should include: (1) Install Flutter dependencies (use subosito/flutter-action@v2 with the flutter channel 'stable'), (2) Run 'flutter pub get', (3) Run 'flutter analyze' for static analysis, (4) Run 'flutter test' for unit/widget tests, (5) Run the compliance check script 'scripts/compliance_check.sh' (make sure it is executable), (6) Optionally build web artifacts with 'flutter build web'. Use a matrix or separate jobs as appropriate. Pin the Flutter SDK version to match pubspec.yaml (sdk: ^3.11.1). Include a concurrency group to cancel redundant runs on the same PR.",
+
+    "Create .github/workflows/promotion.yml - Staging/promotion deployment workflow. This should be triggered manually via workflow_dispatch with an input for the environment name (default 'staging'). It should also be triggerable on push to main (after CI passes). Jobs: (1) Run the full CI checks (analyze, test, compliance), (2) Build the Flutter web app, (3) Configure AWS credentials (placeholder step using aws-actions/configure-aws-credentials@v4), (4) Install and run CDK deploy for the staging stack (placeholder: 'npx cdk deploy KiroMobile-Staging --require-approval never --outputs-file cdk-outputs.json'), (5) Parse cdk-outputs.json and write a formatted markdown summary to $GITHUB_STEP_SUMMARY. The summary should include a table with columns 'Export Name' and 'Value', extracting URLs (CloudFront distribution URL, API Gateway endpoint, S3 bucket URL), API keys, and any other CDK stack outputs. Use jq to parse the JSON. (6) Also upload cdk-outputs.json as a workflow artifact. Use the 'staging' GitHub environment.",
+
+    "Create .github/workflows/production.yml - Production deployment workflow. This should be triggered manually via workflow_dispatch only (with an input for the git ref/tag to deploy, and a confirmation input). It should require the 'production' GitHub environment which provides manual approval gates and environment protection rules. Jobs: (1) Checkout the specified ref, (2) Run full CI checks, (3) Run compliance check, (4) Build Flutter web app, (5) Configure AWS credentials for production, (6) Run CDK deploy for the production stack ('npx cdk deploy KiroMobile-Production --require-approval never --outputs-file cdk-outputs.json'), (7) Parse cdk-outputs.json and write a rich markdown summary to $GITHUB_STEP_SUMMARY. The summary should include: deployment metadata (ref, timestamp, actor), a table of all CDK outputs (URLs, API keys, endpoints, distribution IDs, bucket names, etc.), and status indicators. (8) Upload cdk-outputs.json as artifact.",
+
+    "In all three workflow files, ensure: proper permissions are set (contents: read, id-token: write for OIDC where needed), actions are pinned to specific versions, the Flutter version is consistent, and job names are descriptive. The CDK output parsing step should be robust - handle the nested JSON structure of cdk-outputs.json (which is typically { \"StackName\": { \"OutputKey\": \"OutputValue\" } }) and gracefully handle the case where the file doesn't exist or is empty.",
+
+    "The CDK summary output step should be a reusable pattern across promotion and production workflows. Create it as a consistent bash script step that: (a) reads cdk-outputs.json, (b) uses jq to iterate over all stacks and their outputs, (c) identifies and highlights important outputs like URLs (matching patterns like *Url*, *Endpoint*, *Domain*, *Api*Key*), (d) formats them in a markdown table with emoji indicators (links for URLs, keys for API keys, etc.), and (e) appends the full raw JSON in a collapsible details block for reference.",
+
+    "Validate that the YAML files are syntactically correct by installing yamllint (pip install yamllint) and running it against all three workflow files."
+  ],
+  "acceptance_criteria": [
+    ".github/workflows/ci.yml exists and is valid YAML with correct GitHub Actions schema (on, jobs, steps structure)",
+    ".github/workflows/promotion.yml exists and is valid YAML, uses the 'staging' environment, includes CDK deploy placeholder and CDK outputs summary step writing to $GITHUB_STEP_SUMMARY",
+    ".github/workflows/production.yml exists and is valid YAML, uses the 'production' environment, includes workflow_dispatch trigger with ref and confirmation inputs, includes CDK deploy placeholder and CDK outputs summary step",
+    "All workflows use subosito/flutter-action@v2 for Flutter setup",
+    "CI workflow includes flutter analyze, flutter test, and compliance_check.sh steps",
+    "CDK output summary steps parse cdk-outputs.json using jq and produce a markdown table in $GITHUB_STEP_SUMMARY",
+    "Production workflow has manual approval via environment protection (documented in workflow comments)",
+    "yamllint passes on all three workflow files with no errors"
+  ],
+  "verification": [
+    "Run: pip install yamllint && yamllint .github/workflows/ci.yml .github/workflows/promotion.yml .github/workflows/production.yml",
+    "Run: python3 -c \"import yaml; [yaml.safe_load(open(f'.github/workflows/{f}')) for f in ['ci.yml','promotion.yml','production.yml']]; print('All YAML files parse successfully')\" from the project root",
+    "Visually confirm that each workflow file contains the expected triggers, jobs, steps, and CDK summary output logic"
+  ],
+  "blocked_reason": null,
+  "findings": "All three workflow files created and validated. yamllint passes with zero errors/warnings. PyYAML safe_load parses all files successfully. Used yamllint disable-line comments for the truthy rule on the 'on:' key (standard GitHub Actions convention). Added document-start '---' markers. Used env vars and line continuation to keep all lines under 80 chars. CDK deploy commands use YAML folded scalar (>-) for multi-line readability. Production workflow uses env vars for github.event.inputs to avoid expression injection in shell scripts."
+}
