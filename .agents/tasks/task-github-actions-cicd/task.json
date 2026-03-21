@@ -1,0 +1,7 @@
+{
+  "task_id": "task-github-actions-cicd",
+  "task_description": "Create GitHub Actions CI/CD workflows for the Flutter mobile app: a CI pipeline (ci.yml) triggered on PRs and pushes, a promotion/staging deployment workflow (promotion.yml), and a production deployment workflow (production.yml). All deployment workflows output CDK exports (URLs, API keys, endpoints) to the GitHub Actions job summary as formatted markdown tables.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

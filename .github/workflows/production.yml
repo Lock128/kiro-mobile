@@ -1,0 +1,199 @@
+---
+name: Production Deployment
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Git ref (branch, tag, or SHA) to deploy
+        required: true
+        type: string
+      confirm:
+        description: >-
+          Type 'yes' to confirm production deployment
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Required for OIDC-based AWS credential exchange
+  id-token: write
+
+jobs:
+  validate-inputs:
+    name: Validate Deployment Inputs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check confirmation input
+        env:
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
+        run: |
+          if [ "$CONFIRM" != "yes" ]; then
+            echo "::error::Deployment confirmation failed." \
+              "You must enter 'yes' to deploy."
+            exit 1
+          fi
+          echo "Confirmation accepted." \
+            "Proceeding with ref: $DEPLOY_REF"
+
+  build-and-test:
+    name: Build & Test
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository at specified ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run static analysis
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Run compliance checks
+        run: |
+          chmod +x scripts/compliance_check.sh
+          ./scripts/compliance_check.sh
+
+      - name: Build web artifacts
+        run: flutter build web
+
+  deploy:
+    name: Deploy to Production
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    # Uses the 'production' GitHub environment, which should
+    # have environment protection rules configured (e.g.,
+    # required reviewers, wait timers) for manual approval
+    # gates before deployment proceeds.
+    environment: production
+
+    steps:
+      - name: Checkout repository at specified ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web artifacts
+        run: flutter build web
+
+      # Placeholder: Configure AWS credentials via OIDC for
+      # the production account. Set up the IAM role ARN and
+      # region in the 'production' GitHub environment secrets.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Placeholder: Deploy the production stack using CDK.
+      # Ensure the CDK app and stack definition exist
+      # before enabling this step.
+      - name: Deploy production stack via CDK
+        run: >-
+          npx cdk deploy KiroMobile-Production
+          --require-approval never
+          --outputs-file cdk-outputs.json
+
+      - name: Write CDK outputs to job summary
+        if: always()
+        env:
+          DEPLOY_REF: ${{ github.event.inputs.ref }}
+          DEPLOY_ACTOR: ${{ github.actor }}
+        run: |
+          CDK_FILE="cdk-outputs.json"
+          SUMMARY="$GITHUB_STEP_SUMMARY"
+
+          if [ ! -f "$CDK_FILE" ] || [ ! -s "$CDK_FILE" ]; then
+            echo "> **Note:** No CDK outputs found." \
+              >> "$SUMMARY"
+            exit 0
+          fi
+
+          echo "## Production Deployment Summary" \
+            >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "| Metadata | Value |" >> "$SUMMARY"
+          echo "|----------|-------|" >> "$SUMMARY"
+          echo "| **Ref** | \`${DEPLOY_REF}\` |" \
+            >> "$SUMMARY"
+          echo "| **Deployed by** | @${DEPLOY_ACTOR} |" \
+            >> "$SUMMARY"
+          TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          echo "| **Timestamp** | ${TIMESTAMP} |" \
+            >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+
+          echo "### Stack Outputs" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "| Export Name | Value |" >> "$SUMMARY"
+          echo "|-------------|-------|" >> "$SUMMARY"
+
+          jq -r '
+            to_entries[] |
+            .key as $stack |
+            .value | to_entries[] |
+            [$stack, .key, .value] | @tsv
+          ' "$CDK_FILE" \
+            | while IFS=$'\t' read -r stack key value; do
+            lower_key=$(echo "$key" \
+              | tr '[:upper:]' '[:lower:]')
+            emoji=""
+            case "$lower_key" in
+              *url*|*endpoint*|*domain*)
+                emoji="🔗 " ;;
+              *apikey*|*api_key*|*secret*)
+                emoji="🔑 " ;;
+              *bucket*)
+                emoji="📦 " ;;
+              *distribution*)
+                emoji="🌐 " ;;
+              *arn*)
+                emoji="🏷️ " ;;
+            esac
+            echo "| ${emoji}${stack}/${key}" \
+              "| \`${value}\` |" >> "$SUMMARY"
+          done
+
+          echo "" >> "$SUMMARY"
+          {
+            echo "<details>"
+            echo "<summary>Raw CDK outputs JSON</summary>"
+            echo ""
+            echo '```json'
+            cat "$CDK_FILE"
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$SUMMARY"
+
+      - name: Upload CDK outputs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-production
+          path: cdk-outputs.json
+          if-no-files-found: ignore

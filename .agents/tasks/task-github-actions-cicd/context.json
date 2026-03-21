@@ -1,0 +1,23 @@
+{
+  "project_type": "Cross-platform Flutter mobile/web app (authentication and session management for Kiro platform)",
+  "language": "Dart",
+  "build_system": "Flutter CLI (flutter pub get, flutter build, flutter test, flutter analyze)",
+  "test_framework": "flutter_test with glados for property-based testing. Tests in test/ mirroring lib/ structure. Per-concern test files.",
+  "build_command": "flutter pub get && flutter analyze && flutter test",
+  "test_command": "flutter test",
+  "verification_instructions": "Since Flutter SDK is not installed in the sandbox, verification is limited to: 1) Confirm workflow YAML files exist at correct paths, 2) Validate YAML syntax, 3) Review workflow structure for correctness (proper triggers, jobs, steps, environment usage).",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "Flutter SDK is NOT available in this sandbox. Workflow files are pure YAML and do not require Flutter to create or validate.",
+  "environment_constraints": "Flutter SDK is not installed in the sandbox. Network mode is OPEN_INTERNET. We can install a YAML linter (e.g., yamllint via pip) to validate workflow files. Cannot run flutter commands for verification. GitHub Actions workflows will use the subosito/flutter-action to set up Flutter in CI.",
+  "contribution_requirements": "Compliance: App must NOT be distributed in France. Only standard platform-provided encryption allowed. iOS ITSAppUsesNonExemptEncryption must be false. Compliance check script exists at scripts/compliance_check.sh and should be integrated into CI.",
+  "key_patterns": "Project uses: Provider + ChangeNotifier for state, conditional imports for web vs mobile, abstract service interfaces with concrete implementations. Existing compliance check script at scripts/compliance_check.sh validates encryption standards and France geo-restriction. No existing CI/CD - no .github directory at all.",
+  "relevant_files": [
+    ".github/workflows/ci.yml (to be created)",
+    ".github/workflows/promotion.yml (to be created)",
+    ".github/workflows/production.yml (to be created)",
+    "scripts/compliance_check.sh (existing - to integrate into CI)",
+    "pubspec.yaml (Flutter dependencies and SDK version)",
+    "analysis_options.yaml (lint configuration)"
+  ],
+  "directory_structure": "lib/ (main.dart, models/, services/, views/), test/ (models/, services/, views/), scripts/ (compliance_check.sh), android/, ios/, web/, assets/, .kiro/steering/ (compliance.md, product.md, structure.md, tech.md)"
+}
