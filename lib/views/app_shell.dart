@@ -14,6 +14,7 @@ import '../services/debug_log.dart';
 import '../services/telemetry_service.dart';
 import 'error_view.dart';
 import 'home_view.dart';
+import 'settings_view.dart';
 import 'sign_in_view.dart';
 import 'sign_in_view_stub.dart'
     if (dart.library.js_interop) 'sign_in_view_web.dart';
@@ -261,6 +262,15 @@ class _AppShellState extends State<AppShell> {
                           icon: const Icon(Icons.bug_report_outlined),
                           tooltip: 'Debug Log',
                           onPressed: () => _showDebugLogSheet(context),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.settings_outlined),
+                          tooltip: 'Settings',
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const SettingsView(),
+                            ),
+                          ),
                         ),
                         IconButton(
                           icon: const Icon(Icons.logout),

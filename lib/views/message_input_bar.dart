@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../services/settings_service.dart';
 
 /// A reusable text input bar with a send button for sending messages
 /// to a session via the API.
@@ -43,6 +46,7 @@ class _MessageInputBarState extends State<MessageInputBar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final enterToSend = context.watch<SettingsService>().enterToSend;
 
     return Container(
       padding: EdgeInsets.only(
@@ -64,8 +68,10 @@ class _MessageInputBarState extends State<MessageInputBar> {
               controller: _controller,
               minLines: 1,
               maxLines: 4,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _handleSend(),
+              textInputAction: enterToSend
+                  ? TextInputAction.send
+                  : TextInputAction.newline,
+              onSubmitted: enterToSend ? (_) => _handleSend() : null,
               decoration: InputDecoration(
                 hintText: widget.hintText,
                 border: OutlineInputBorder(

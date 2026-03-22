@@ -594,33 +594,73 @@ class SessionHistory {
 
 /// A single message or activity in a session.
 class SessionMessage {
-  SessionMessage({required this.role, this.content, this.timestamp, this.agentName});
+  SessionMessage({
+    required this.role,
+    this.content,
+    this.timestamp,
+    this.agentName,
+    this.isToolUse = false,
+    this.isToolResult = false,
+    this.toolName,
+  });
 
   final String role;
   final String? content;
   final DateTime? timestamp;
   final String? agentName;
+  final bool isToolUse;
+  final bool isToolResult;
+  final String? toolName;
+
+  bool get isTool => isToolUse || isToolResult;
 
   factory SessionMessage.fromJson(Map<String, dynamic> json) {
-    // Content can be nested: {text: {content: "..."}} or {toolResult: {...}}
     String? content;
+    bool isToolUse = false;
+    bool isToolResult = false;
+    String? toolName;
     final rawContent = json['content'];
-    if (rawContent is Map<String, dynamic>) {
-      final text = rawContent['text'];
-      if (text is Map<String, dynamic>) {
-        content = text['content'] as String?;
-      } else if (text is String) {
-        content = text;
+    if (rawContent is String) {
+      content = rawContent;
+    } else if (rawContent is Map<String, dynamic>) {
+      // Detect toolUse messages.
+      final toolUse = rawContent['toolUse'];
+      if (toolUse is Map<String, dynamic>) {
+        isToolUse = true;
+        toolName = toolUse['name'] as String?;
+        content = jsonEncode(toolUse['input'] ?? toolUse);
       }
-      // For tool results, extract a summary.
+
+      // Detect toolResult messages.
       final toolResult = rawContent['toolResult'];
-      if (toolResult != null && content == null) {
-        final items = (toolResult as Map<String, dynamic>)['content'] as List?;
+      if (!isToolUse && toolResult is Map<String, dynamic>) {
+        isToolResult = true;
+        toolName = toolResult['toolUseId'] as String?;
+        final items = toolResult['content'] as List?;
         if (items != null && items.isNotEmpty) {
-          final first = items.first as Map<String, dynamic>;
-          content = first['text'] as String?;
+          final texts = items
+              .whereType<Map<String, dynamic>>()
+              .map((e) => e['text'] as String?)
+              .where((t) => t != null)
+              .toList();
+          content = texts.isNotEmpty ? texts.join('\n') : jsonEncode(toolResult);
+        } else {
+          content = jsonEncode(toolResult);
         }
       }
+
+      if (!isToolUse && !isToolResult) {
+        final text = rawContent['text'];
+        if (text is Map<String, dynamic>) {
+          content = text['content'] as String?;
+        } else if (text is String) {
+          content = text;
+        }
+        // Fallback: encode unrecognized map shapes as JSON.
+        content ??= jsonEncode(rawContent);
+      }
+    } else if (rawContent is List) {
+      content = jsonEncode(rawContent);
     }
 
     return SessionMessage(
@@ -628,6 +668,9 @@ class SessionMessage {
       content: content,
       timestamp: _tryParseDate(json['timestamp']),
       agentName: json['agentName'] as String?,
+      isToolUse: isToolUse,
+      isToolResult: isToolResult,
+      toolName: toolName,
     );
   }
 }

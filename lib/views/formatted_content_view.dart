@@ -24,10 +24,7 @@ class FormattedContentView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (content.isPlainText) {
-      return Text(
-        content.segments.first.text ?? '',
-        style: Theme.of(context).textTheme.bodyMedium,
-      );
+      return _ExpandableText(text: content.segments.first.text ?? '');
     }
 
     return Column(
@@ -44,10 +41,7 @@ class FormattedContentView extends StatelessWidget {
   Widget _buildSegment(BuildContext context, ContentSegment segment) {
     switch (segment.type) {
       case SegmentType.text:
-        return Text(
-          segment.text ?? '',
-          style: Theme.of(context).textTheme.bodyMedium,
-        );
+        return _ExpandableText(text: segment.text ?? '');
       case SegmentType.json:
         return _JsonBlock(
           json: segment.jsonText ?? '',
@@ -56,6 +50,68 @@ class FormattedContentView extends StatelessWidget {
       case SegmentType.keyValue:
         return _KeyValueCard(pairs: segment.kvPairs ?? {});
     }
+  }
+}
+
+// ─── Expandable text ─────────────────────────────────────────────────────────
+
+class _ExpandableText extends StatefulWidget {
+  const _ExpandableText({required this.text});
+  final String text;
+  static const int maxLines = 6;
+
+  @override
+  State<_ExpandableText> createState() => _ExpandableTextState();
+}
+
+class _ExpandableTextState extends State<_ExpandableText> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final span = TextSpan(
+          text: widget.text,
+          style: theme.textTheme.bodyMedium,
+        );
+        final tp = TextPainter(
+          text: span,
+          maxLines: _ExpandableText.maxLines,
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: constraints.maxWidth);
+
+        if (!tp.didExceedMaxLines) {
+          return Text(widget.text, style: theme.textTheme.bodyMedium);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.text,
+              style: theme.textTheme.bodyMedium,
+              maxLines: _expanded ? null : _ExpandableText.maxLines,
+              overflow: _expanded ? null : TextOverflow.fade,
+            ),
+            TextButton.icon(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+              ),
+              label: Text(_expanded ? 'Show less' : 'Show more'),
+              style: TextButton.styleFrom(
+                textStyle: theme.textTheme.labelSmall,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 32),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 
