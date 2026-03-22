@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_manager.dart';
 import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
+import '../services/settings_service.dart';
 import 'session_detail_view.dart';
 import 'task_detail_view.dart';
 
@@ -128,6 +129,7 @@ class _CreateTabState extends State<CreateTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final enterToSend = context.watch<SettingsService>().enterToSend;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -168,7 +170,9 @@ class _CreateTabState extends State<CreateTab> {
                   child: Row(
                     children: [
                       Text(
-                        'New line  shift+enter',
+                        enterToSend
+                            ? 'New line  shift+enter'
+                            : 'New line  enter',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -261,7 +265,7 @@ class _CreateTabState extends State<CreateTab> {
   }
 }
 
-/// Inline dropdown for selecting repos, filtering out already-selected ones.
+/// Inline autocomplete for selecting repos, filtering out already-selected ones.
 class _RepoDropdown extends StatelessWidget {
   const _RepoDropdown({
     required this.repos,
@@ -288,27 +292,36 @@ class _RepoDropdown extends StatelessWidget {
       );
     }
 
-    return PopupMenuButton<ConnectionResource>(
-      onSelected: onSelected,
-      itemBuilder: (_) => available
-          .map((r) => PopupMenuItem(value: r, child: Text(r.displayName)))
-          .toList(),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Select repo(s)',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(width: 4),
-          Icon(
-            Icons.unfold_more,
-            size: 18,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ],
+    return SizedBox(
+      width: 200,
+      child: Autocomplete<ConnectionResource>(
+        displayStringForOption: (r) => r.displayName,
+        optionsBuilder: (textEditingValue) {
+          final query = textEditingValue.text.toLowerCase();
+          if (query.isEmpty) return available;
+          return available.where(
+            (r) => r.displayName.toLowerCase().contains(query),
+          );
+        },
+        onSelected: (repo) {
+          onSelected(repo);
+        },
+        fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+          return TextField(
+            controller: controller,
+            focusNode: focusNode,
+            style: Theme.of(context).textTheme.bodyMedium,
+            decoration: InputDecoration(
+              hintText: 'Search repos…',
+              hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+              isDense: true,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+          );
+        },
       ),
     );
   }
@@ -458,7 +471,11 @@ class ChatsTabState extends State<ChatsTab> {
                     onChanged: (value) => setState(() => _searchQuery = value),
                   ),
                   const SizedBox(height: 8),
-                  Table(
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 600),
+                      child: Table(
                     columnWidths: const {
                       0: FlexColumnWidth(3),
                       1: FixedColumnWidth(48),
@@ -579,6 +596,7 @@ class ChatsTabState extends State<ChatsTab> {
                         ),
                     ],
                   ),
+                  )),
                   if (sessions.isEmpty && _searchQuery.isNotEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
@@ -837,7 +855,11 @@ class TasksTabState extends State<TasksTab> {
                     onChanged: (value) => setState(() => _searchQuery = value),
                   ),
                   const SizedBox(height: 8),
-                  Table(
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 700),
+                      child: Table(
                     columnWidths: const {
                       0: FlexColumnWidth(2.5),
                       1: FlexColumnWidth(1.5),
@@ -959,6 +981,7 @@ class TasksTabState extends State<TasksTab> {
                         ),
                     ],
                   ),
+                  )),
                   if (tasks.isEmpty && _searchQuery.isNotEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),

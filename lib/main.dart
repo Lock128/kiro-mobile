@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutterrific_opentelemetry/flutterrific_opentelemetry.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'services/auth_manager.dart';
 import 'services/connectivity_monitor.dart';
 import 'services/credential_store_factory.dart';
 import 'services/debug_log.dart';
+import 'services/settings_service.dart';
 import 'services/telemetry_config.dart';
 import 'services/telemetry_service.dart';
 import 'views/app_shell.dart';
@@ -75,6 +77,8 @@ void main() {
     final credentialStore = createCredentialStore();
     final authManager = AuthManager(credentialStore: credentialStore);
     final connectivityMonitor = ConnectivityMonitorImpl();
+    final prefs = await SharedPreferences.getInstance();
+    final settingsService = SettingsService(prefs);
 
     // Kick off credential loading in the background.
     authManager.initialize();
@@ -83,6 +87,7 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AuthManager>.value(value: authManager),
+          ChangeNotifierProvider<SettingsService>.value(value: settingsService),
           Provider<ConnectivityMonitor>.value(value: connectivityMonitor),
           Provider<TelemetryService>.value(value: telemetryService),
         ],

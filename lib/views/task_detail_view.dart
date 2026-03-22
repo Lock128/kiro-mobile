@@ -354,15 +354,28 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   const _MessageBubble({required this.message});
   final SessionMessage message;
 
   @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  bool _toolExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final isUser = message.role == 'user';
+    final msg = widget.message;
+    final isUser = msg.role == 'user';
     final theme = Theme.of(context);
-    final formatted = ContentFormatter.format(message.content);
+
+    if (msg.isTool) {
+      return _buildToolBubble(theme, msg);
+    }
+
+    final formatted = ContentFormatter.format(msg.content);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -393,22 +406,22 @@ class _MessageBubble extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (!isUser && message.agentName != null)
+                  if (!isUser && msg.agentName != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
-                        message.agentName!,
+                        msg.agentName!,
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: theme.colorScheme.primary,
                         ),
                       ),
                     ),
                   FormattedContentView(content: formatted),
-                  if (message.timestamp != null)
+                  if (msg.timestamp != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        _formatTime(message.timestamp!),
+                        _formatTime(msg.timestamp!),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -420,6 +433,71 @@ class _MessageBubble extends StatelessWidget {
           ),
           if (isUser) const SizedBox(width: 28),
         ],
+      ),
+    );
+  }
+
+  Widget _buildToolBubble(ThemeData theme, SessionMessage msg) {
+    final label = msg.toolName ?? (msg.isToolUse == true ? 'Tool call' : 'Tool result');
+    final icon = msg.isToolUse == true ? Icons.build_outlined : Icons.output_outlined;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withAlpha(120),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () => setState(() => _toolExpanded = !_toolExpanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 16,
+                        color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Icon(
+                      _toolExpanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_toolExpanded && msg.content != null) ...[
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  msg.content!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
