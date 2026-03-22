@@ -438,8 +438,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
   }
 
   Widget _buildToolBubble(ThemeData theme, SessionMessage msg) {
-    final label = msg.toolName ?? (msg.isToolUse ? 'Tool call' : 'Tool result');
-    final icon = msg.isToolUse ? Icons.build_outlined : Icons.output_outlined;
+    final label = msg.toolName ?? (msg.isToolUse == true ? 'Tool call' : 'Tool result');
+    final icon = msg.isToolUse == true ? Icons.build_outlined : Icons.output_outlined;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(

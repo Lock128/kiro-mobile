@@ -612,7 +612,7 @@ class SessionMessage {
   final bool isToolResult;
   final String? toolName;
 
-  bool get isTool => isToolUse || isToolResult;
+  bool get isTool => (isToolUse == true) || (isToolResult == true);
 
   factory SessionMessage.fromJson(Map<String, dynamic> json) {
     String? content;
