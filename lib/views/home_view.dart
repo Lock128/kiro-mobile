@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_manager.dart';
-import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
 import 'session_detail_view.dart';
 import 'task_detail_view.dart';
@@ -19,8 +18,8 @@ class CreateTab extends StatefulWidget {
 
 class _CreateTabState extends State<CreateTab> {
   final _promptController = TextEditingController();
-  List<ConnectionResource> _repos = [];
-  final List<ConnectionResource> _selectedRepos = [];
+  List<ProviderResource> _repos = [];
+  final List<ProviderResource> _selectedRepos = [];
   bool _loadingRepos = true;
   String? _repoError;
 
@@ -36,7 +35,7 @@ class _CreateTabState extends State<CreateTab> {
       _repoError = null;
     });
     try {
-      final repos = await widget.api.listConnectionResources();
+      final repos = await widget.api.listProviderResources();
       repos.sort((a, b) =>
           a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
       if (mounted) {
@@ -61,7 +60,7 @@ class _CreateTabState extends State<CreateTab> {
 
   bool _submitting = false;
 
-  void _removeRepo(ConnectionResource repo) {
+  void _removeRepo(ProviderResource repo) {
     setState(() => _selectedRepos.remove(repo));
   }
 
@@ -80,28 +79,33 @@ class _CreateTabState extends State<CreateTab> {
     setState(() => _submitting = true);
 
     try {
-      // 1. Create the session with selected repos.
-      final sessionId = await widget.api.createSession(
+      // 1. Create the space with selected repos.
+      final spaceId = await widget.api.createSpace(
         repos: _selectedRepos,
       );
 
-      // 2. Ensure the session is ready on the backend.
-      await widget.api.getSession(sessionId: sessionId);
+      // 2. Get the main chat session for the space.
+      final mainChat = await widget.api.getMainChatSession(spaceId: spaceId);
+      final sessionId = mainChat.sessionId.isNotEmpty
+          ? mainChat.sessionId
+          : spaceId; // fallback: use spaceId as sessionId
 
       // 3. Send the user message.
-      await widget.api.generateAgentSessionResponse(
+      await widget.api.streamSendMessage(
+        spaceId: spaceId,
         sessionId: sessionId,
         message: prompt,
       );
 
       if (!mounted) return;
 
-      // 3. Navigate to the session detail view.
+      // 4. Navigate to the session detail view.
       _promptController.clear();
       Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => SessionDetailView(
             api: widget.api,
+            spaceId: spaceId,
             sessionId: sessionId,
           ),
         ),
@@ -111,7 +115,7 @@ class _CreateTabState extends State<CreateTab> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create session: $e')),
+          SnackBar(content: Text('Failed to create space: $e')),
         );
       }
     } finally {
@@ -135,7 +139,6 @@ class _CreateTabState extends State<CreateTab> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const SizedBox(height: 24),
-          // Ghost icon
           Icon(Icons.smart_toy_outlined, size: 56, color: theme.colorScheme.primary),
           const SizedBox(height: 16),
           Text(
@@ -145,7 +148,6 @@ class _CreateTabState extends State<CreateTab> {
             ),
           ),
           const SizedBox(height: 32),
-          // Prompt text field
           Container(
             decoration: BoxDecoration(
               border: Border.all(color: theme.colorScheme.primary, width: 2),
@@ -180,16 +182,14 @@ class _CreateTabState extends State<CreateTab> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : Icon(
                                 Icons.arrow_upward,
                                 color: theme.colorScheme.primary,
                               ),
                         style: IconButton.styleFrom(
-                          backgroundColor:
-                              theme.colorScheme.primary.withAlpha(30),
+                          backgroundColor: theme.colorScheme.primary.withAlpha(30),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -202,8 +202,6 @@ class _CreateTabState extends State<CreateTab> {
             ),
           ),
           const SizedBox(height: 16),
-
-          // Repo selector
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
@@ -269,9 +267,9 @@ class _RepoDropdown extends StatelessWidget {
     required this.onSelected,
   });
 
-  final List<ConnectionResource> repos;
-  final List<ConnectionResource> selectedRepos;
-  final ValueChanged<ConnectionResource> onSelected;
+  final List<ProviderResource> repos;
+  final List<ProviderResource> selectedRepos;
+  final ValueChanged<ProviderResource> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -288,7 +286,7 @@ class _RepoDropdown extends StatelessWidget {
       );
     }
 
-    return PopupMenuButton<ConnectionResource>(
+    return PopupMenuButton<ProviderResource>(
       onSelected: onSelected,
       itemBuilder: (_) => available
           .map((r) => PopupMenuItem(value: r, child: Text(r.displayName)))
@@ -315,7 +313,7 @@ class _RepoDropdown extends StatelessWidget {
 }
 
 
-// ─── Chats Tab ───────────────────────────────────────────────────────────────
+// ─── Chats Tab (now Spaces) ──────────────────────────────────────────────────
 
 class ChatsTab extends StatefulWidget {
   const ChatsTab({super.key, required this.api});
@@ -326,16 +324,16 @@ class ChatsTab extends StatefulWidget {
 }
 
 class ChatsTabState extends State<ChatsTab> {
-  late Future<List<ChatSession>> _future;
+  late Future<List<Space>> _future;
   String _sortColumn = 'updated';
-  bool _sortAscending = false; // descending by default
+  bool _sortAscending = false;
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _future = widget.api.listSessions();
+    _future = widget.api.listSpaces();
   }
 
   @override
@@ -345,21 +343,22 @@ class ChatsTabState extends State<ChatsTab> {
   }
 
   void reload() {
-    final f = widget.api.listSessions();
+    final f = widget.api.listSpaces();
     setState(() {
       _future = f;
     });
   }
 
-  String _repoLabel(ChatSession s) {
+  String _repoLabel(Space s) {
+    if (s.githubRepo != null) {
+      final fullName = s.githubRepo!['fullName'] as String?;
+      if (fullName != null && fullName.isNotEmpty) return fullName;
+    }
     final res = s.providerResources;
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
-    final gh = res.first['github'] as Map<String, dynamic>?;
-    if (gh == null) return '';
-    final owner = gh['owner'] as String? ?? '';
-    final name = gh['name'] as String? ?? '';
-    if (owner.isNotEmpty && name.isNotEmpty) return '$owner/$name';
+    final first = res.first;
+    final name = first['name'] as String? ?? '';
     return name;
   }
 
@@ -369,37 +368,37 @@ class ChatsTabState extends State<ChatsTab> {
         _sortAscending = !_sortAscending;
       } else {
         _sortColumn = column;
-        _sortAscending = column == 'name'; // default asc for name, desc for dates
+        _sortAscending = column == 'name';
       }
     });
   }
 
-  List<ChatSession> _sortAndFilter(List<ChatSession> sessions) {
-    var result = sessions.toList();
+  List<Space> _sortAndFilter(List<Space> spaces) {
+    var result = spaces.toList();
 
-    // Filter
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
       result = result.where((s) {
-        final name = s.displayName.toLowerCase();
+        final name = s.name.toLowerCase();
         final repo = _repoLabel(s).toLowerCase();
         return name.contains(q) || repo.contains(q);
       }).toList();
     }
 
-    // Sort
     result.sort((a, b) {
       int cmp;
       switch (_sortColumn) {
         case 'name':
-          cmp = a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+          cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
         case 'repository':
           cmp = _repoLabel(a).toLowerCase().compareTo(_repoLabel(b).toLowerCase());
+        case 'type':
+          cmp = (a.spaceType ?? '').compareTo(b.spaceType ?? '');
         case 'created':
           cmp = (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0));
         case 'updated':
         default:
-          cmp = (a.lastUpdatedAt ?? DateTime(0)).compareTo(b.lastUpdatedAt ?? DateTime(0));
+          cmp = (a.updatedAt ?? DateTime(0)).compareTo(b.updatedAt ?? DateTime(0));
       }
       return _sortAscending ? cmp : -cmp;
     });
@@ -411,7 +410,7 @@ class ChatsTabState extends State<ChatsTab> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return FutureBuilder<List<ChatSession>>(
+    return FutureBuilder<List<Space>>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -425,24 +424,24 @@ class ChatsTabState extends State<ChatsTab> {
             return const Center(child: Text('Session expired. Signing out…'));
           }
           return _ErrorRetry(
-            message: 'Failed to load chats.',
+            message: 'Failed to load spaces.',
             onRetry: () {
-              final f = widget.api.listSessions();
+              final f = widget.api.listSpaces();
               setState(() => _future = f);
             },
           );
         }
 
-        final allSessions = snapshot.data ?? [];
-        if (allSessions.isEmpty) {
-          return const Center(child: Text('No chats yet.'));
+        final allSpaces = snapshot.data ?? [];
+        if (allSpaces.isEmpty) {
+          return const Center(child: Text('No spaces yet.'));
         }
 
-        final sessions = _sortAndFilter(allSessions);
+        final spaces = _sortAndFilter(allSpaces);
 
         return RefreshIndicator(
           onRefresh: () async {
-            final f = widget.api.listSessions();
+            final f = widget.api.listSpaces();
             setState(() => _future = f);
             await f;
           },
@@ -461,7 +460,7 @@ class ChatsTabState extends State<ChatsTab> {
                   Table(
                     columnWidths: const {
                       0: FlexColumnWidth(3),
-                      1: FixedColumnWidth(48),
+                      1: FixedColumnWidth(80),
                       2: FlexColumnWidth(2),
                       3: FlexColumnWidth(1.2),
                       4: FlexColumnWidth(1.2),
@@ -484,14 +483,12 @@ class ChatsTabState extends State<ChatsTab> {
                             ascending: _sortAscending,
                             onTap: _onSort,
                           ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Tooltip(
-                              message: 'Has task',
-                              child: Icon(Icons.task_alt,
-                                  size: 16,
-                                  color: theme.colorScheme.onSurfaceVariant),
-                            ),
+                          _SortableHeader(
+                            label: 'Type',
+                            column: 'type',
+                            currentColumn: _sortColumn,
+                            ascending: _sortAscending,
+                            onTap: _onSort,
                           ),
                           _SortableHeader(
                             label: 'Repository',
@@ -516,7 +513,7 @@ class ChatsTabState extends State<ChatsTab> {
                           ),
                         ],
                       ),
-                      for (final s in sessions)
+                      for (final s in spaces)
                         TableRow(
                           decoration: BoxDecoration(
                             border: Border(
@@ -529,17 +526,21 @@ class ChatsTabState extends State<ChatsTab> {
                             _TableCell(
                               child: InkWell(
                                 onTap: () {
+                                  final sessionId = s.sessionIds.isNotEmpty
+                                      ? s.sessionIds.first
+                                      : s.spaceId;
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
                                       builder: (_) => SessionDetailView(
                                         api: widget.api,
-                                        sessionId: s.sessionId,
+                                        spaceId: s.spaceId,
+                                        sessionId: sessionId,
                                       ),
                                     ),
                                   );
                                 },
                                 child: Text(
-                                  s.displayName,
+                                  s.name,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodyMedium?.copyWith(
@@ -549,11 +550,10 @@ class ChatsTabState extends State<ChatsTab> {
                               ),
                             ),
                             _TableCell(
-                              child: s.isTask
-                                  ? Icon(Icons.check,
-                                      size: 18,
-                                      color: theme.colorScheme.onSurfaceVariant)
-                                  : const SizedBox.shrink(),
+                              child: Text(
+                                s.spaceType ?? '',
+                                style: theme.textTheme.bodySmall,
+                              ),
                             ),
                             _TableCell(
                               child: Text(
@@ -571,7 +571,7 @@ class ChatsTabState extends State<ChatsTab> {
                             ),
                             _TableCell(
                               child: Text(
-                                s.lastUpdatedAt != null ? _formatDate(s.lastUpdatedAt!) : '',
+                                s.updatedAt != null ? _formatDate(s.updatedAt!) : '',
                                 style: theme.textTheme.bodySmall,
                               ),
                             ),
@@ -579,10 +579,10 @@ class ChatsTabState extends State<ChatsTab> {
                         ),
                     ],
                   ),
-                  if (sessions.isEmpty && _searchQuery.isNotEmpty)
+                  if (spaces.isEmpty && _searchQuery.isNotEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
-                      child: Text('No chats match your search.'),
+                      child: Text('No spaces match your search.'),
                     ),
                 ],
               ),
@@ -607,7 +607,8 @@ class _TableCell extends StatelessWidget {
   }
 }
 
-// ─── Tasks Tab ───────────────────────────────────────────────────────────────
+
+// ─── Tasks Tab (now shows AUTONOMOUS spaces) ─────────────────────────────────
 
 class TasksTab extends StatefulWidget {
   const TasksTab({super.key, required this.api});
@@ -618,9 +619,9 @@ class TasksTab extends StatefulWidget {
 }
 
 class TasksTabState extends State<TasksTab> {
-  late Future<_TasksData> _future;
+  late Future<List<Space>> _future;
   String _sortColumn = 'updated';
-  bool _sortAscending = false; // descending by default
+  bool _sortAscending = false;
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
@@ -643,97 +644,57 @@ class TasksTabState extends State<TasksTab> {
     });
   }
 
-  Future<_TasksData> _loadTasks() async {
-    final results = await Future.wait([
-      widget.api.listAgentTasks(),
-      widget.api.listSessions(),
-    ]);
-    final tasks = results[0] as List<AgentTask>;
-    final sessions = results[1] as List<ChatSession>;
-    final sessionByTaskId = <String, ChatSession>{};
-    for (final s in sessions) {
-      if (s.taskId != null && s.taskId!.isNotEmpty) {
-        sessionByTaskId[s.taskId!] = s;
-      }
-    }
-    DebugLog.log('_loadTasks: ${tasks.length} tasks, ${sessions.length} sessions, ${sessionByTaskId.length} mapped');
-    for (final t in tasks.take(3)) {
-      final matched = sessionByTaskId.containsKey(t.taskId);
-      DebugLog.log('  task "${t.taskId}" matched=$matched');
-    }
-    return _TasksData(tasks: tasks, sessionByTaskId: sessionByTaskId);
+  Future<List<Space>> _loadTasks() async {
+    final spaces = await widget.api.listSpaces();
+    // Filter to only AUTONOMOUS spaces (tasks).
+    return spaces.where((s) => s.isAutonomous).toList();
   }
 
-  Future<void> _openTask(AgentTask task, Map<String, ChatSession> sessionByTaskId) async {
-    final session = sessionByTaskId[task.taskId];
+  Future<void> _openTask(Space space) async {
+    final sessionId = space.sessionIds.isNotEmpty
+        ? space.sessionIds.first
+        : space.spaceId;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => TaskDetailView(
           api: widget.api,
-          task: task,
-          session: session,
+          space: space,
+          sessionId: sessionId,
         ),
       ),
     );
   }
 
-  String _repoLabel(AgentTask task, Map<String, ChatSession> sessionByTaskId) {
-    // Prefer providerResources directly on the task if available.
-    var res = task.providerResources;
-    // Fall back to the session lookup.
-    if (res == null || res.isEmpty) {
-      final session = sessionByTaskId[task.taskId];
-      if (session == null) return '';
-      res = session.providerResources;
+  String _repoLabel(Space s) {
+    if (s.githubRepo != null) {
+      final fullName = s.githubRepo!['fullName'] as String?;
+      if (fullName != null && fullName.isNotEmpty) return fullName;
     }
+    final res = s.providerResources;
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
-    final gh = res.first['github'] as Map<String, dynamic>?;
-    if (gh == null) return '';
-    final owner = gh['owner'] as String? ?? '';
-    final name = gh['name'] as String? ?? '';
-    if (owner.isNotEmpty && name.isNotEmpty) return '$owner/$name';
-    return name;
-  }
-
-  String _sourceLabel(AgentTask task) {
-    final src = task.sourceProvider;
-    if (src == null || src.isEmpty) return '';
-    if (src.contains('BIGWEAVER')) return 'Kiro';
-    return src;
+    final first = res.first;
+    return first['name'] as String? ?? '';
   }
 
   Widget _statusChip(String? status, ThemeData theme) {
     final label = status ?? 'unknown';
-    final isCompleted = label.toUpperCase() == 'COMPLETED';
-    final isInProgress =
-        label.toUpperCase() == 'IN_PROGRESS' || label.toUpperCase() == 'RUNNING';
+    final isActive = label.toUpperCase() == 'ACTIVE';
     final Color color;
     final IconData icon;
-    if (isCompleted) {
+    if (isActive) {
       color = Colors.green;
       icon = Icons.check_circle_outline;
-    } else if (isInProgress) {
-      color = Colors.orange;
-      icon = Icons.autorenew;
     } else {
       color = theme.colorScheme.onSurfaceVariant;
       icon = Icons.circle_outlined;
     }
-    final display = label
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isEmpty
-            ? w
-            : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}')
-        .join(' ');
-
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 16, color: color),
         const SizedBox(width: 4),
-        Text(display, style: TextStyle(color: color, fontSize: 13)),
+        Text(label, style: TextStyle(color: color, fontSize: 13)),
       ],
     );
   }
@@ -749,14 +710,14 @@ class TasksTabState extends State<TasksTab> {
     });
   }
 
-  List<AgentTask> _sortAndFilter(List<AgentTask> tasks, Map<String, ChatSession> sessionMap) {
-    var result = tasks.toList();
+  List<Space> _sortAndFilter(List<Space> spaces) {
+    var result = spaces.toList();
 
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
-      result = result.where((t) {
-        final name = (t.name ?? '').toLowerCase();
-        final repo = _repoLabel(t, sessionMap).toLowerCase();
+      result = result.where((s) {
+        final name = s.name.toLowerCase();
+        final repo = _repoLabel(s).toLowerCase();
         return name.contains(q) || repo.contains(q);
       }).toList();
     }
@@ -765,17 +726,16 @@ class TasksTabState extends State<TasksTab> {
       int cmp;
       switch (_sortColumn) {
         case 'name':
-          cmp = (a.name ?? '').toLowerCase().compareTo((b.name ?? '').toLowerCase());
+          cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
         case 'status':
           cmp = (a.status ?? '').compareTo(b.status ?? '');
         case 'repository':
-          cmp = _repoLabel(a, sessionMap).toLowerCase().compareTo(
-              _repoLabel(b, sessionMap).toLowerCase());
+          cmp = _repoLabel(a).toLowerCase().compareTo(_repoLabel(b).toLowerCase());
         case 'created':
-          cmp = (a.createdTime ?? DateTime(0)).compareTo(b.createdTime ?? DateTime(0));
+          cmp = (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0));
         case 'updated':
         default:
-          cmp = (a.lastUpdatedTime ?? DateTime(0)).compareTo(b.lastUpdatedTime ?? DateTime(0));
+          cmp = (a.updatedAt ?? DateTime(0)).compareTo(b.updatedAt ?? DateTime(0));
       }
       return _sortAscending ? cmp : -cmp;
     });
@@ -787,7 +747,7 @@ class TasksTabState extends State<TasksTab> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return FutureBuilder<_TasksData>(
+    return FutureBuilder<List<Space>>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -809,15 +769,12 @@ class TasksTabState extends State<TasksTab> {
           );
         }
 
-        final data = snapshot.data!;
-        final allTasks = data.tasks;
-        final sessionMap = data.sessionByTaskId;
-
+        final allTasks = snapshot.data ?? [];
         if (allTasks.isEmpty) {
           return const Center(child: Text('No tasks yet.'));
         }
 
-        final tasks = _sortAndFilter(allTasks, sessionMap);
+        final tasks = _sortAndFilter(allTasks);
 
         return RefreshIndicator(
           onRefresh: () async {
@@ -839,12 +796,11 @@ class TasksTabState extends State<TasksTab> {
                   const SizedBox(height: 8),
                   Table(
                     columnWidths: const {
-                      0: FlexColumnWidth(2.5),
-                      1: FlexColumnWidth(1.5),
+                      0: FlexColumnWidth(3),
+                      1: FlexColumnWidth(1.2),
                       2: FlexColumnWidth(2),
-                      3: FixedColumnWidth(48),
+                      3: FlexColumnWidth(1.2),
                       4: FlexColumnWidth(1.2),
-                      5: FlexColumnWidth(1.2),
                     },
                     defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                     children: [
@@ -857,48 +813,11 @@ class TasksTabState extends State<TasksTab> {
                           ),
                         ),
                         children: [
-                          _SortableHeader(
-                            label: 'Name',
-                            column: 'name',
-                            currentColumn: _sortColumn,
-                            ascending: _sortAscending,
-                            onTap: _onSort,
-                          ),
-                          _SortableHeader(
-                            label: 'Task status',
-                            column: 'status',
-                            currentColumn: _sortColumn,
-                            ascending: _sortAscending,
-                            onTap: _onSort,
-                          ),
-                          _SortableHeader(
-                            label: 'Repository',
-                            column: 'repository',
-                            currentColumn: _sortColumn,
-                            ascending: _sortAscending,
-                            onTap: _onSort,
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Text('Source',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                )),
-                          ),
-                          _SortableHeader(
-                            label: 'Created',
-                            column: 'created',
-                            currentColumn: _sortColumn,
-                            ascending: _sortAscending,
-                            onTap: _onSort,
-                          ),
-                          _SortableHeader(
-                            label: 'Updated',
-                            column: 'updated',
-                            currentColumn: _sortColumn,
-                            ascending: _sortAscending,
-                            onTap: _onSort,
-                          ),
+                          _SortableHeader(label: 'Name', column: 'name', currentColumn: _sortColumn, ascending: _sortAscending, onTap: _onSort),
+                          _SortableHeader(label: 'Status', column: 'status', currentColumn: _sortColumn, ascending: _sortAscending, onTap: _onSort),
+                          _SortableHeader(label: 'Repository', column: 'repository', currentColumn: _sortColumn, ascending: _sortAscending, onTap: _onSort),
+                          _SortableHeader(label: 'Created', column: 'created', currentColumn: _sortColumn, ascending: _sortAscending, onTap: _onSort),
+                          _SortableHeader(label: 'Updated', column: 'updated', currentColumn: _sortColumn, ascending: _sortAscending, onTap: _onSort),
                         ],
                       ),
                       for (final t in tasks)
@@ -913,9 +832,9 @@ class TasksTabState extends State<TasksTab> {
                           children: [
                             _TableCell(
                               child: InkWell(
-                                onTap: () => _openTask(t, sessionMap),
+                                onTap: () => _openTask(t),
                                 child: Text(
-                                  t.name ?? 'Untitled task',
+                                  t.name,
                                   maxLines: 3,
                                   overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodyMedium?.copyWith(
@@ -927,7 +846,7 @@ class TasksTabState extends State<TasksTab> {
                             _TableCell(child: _statusChip(t.status, theme)),
                             _TableCell(
                               child: Text(
-                                _repoLabel(t, sessionMap),
+                                _repoLabel(t),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.bodySmall,
@@ -935,23 +854,13 @@ class TasksTabState extends State<TasksTab> {
                             ),
                             _TableCell(
                               child: Text(
-                                _sourceLabel(t),
+                                t.createdAt != null ? _formatDate(t.createdAt!) : '',
                                 style: theme.textTheme.bodySmall,
                               ),
                             ),
                             _TableCell(
                               child: Text(
-                                t.createdTime != null
-                                    ? _formatDate(t.createdTime!)
-                                    : '',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ),
-                            _TableCell(
-                              child: Text(
-                                t.lastUpdatedTime != null
-                                    ? _formatDate(t.lastUpdatedTime!)
-                                    : '',
+                                t.updatedAt != null ? _formatDate(t.updatedAt!) : '',
                                 style: theme.textTheme.bodySmall,
                               ),
                             ),
@@ -974,11 +883,6 @@ class TasksTabState extends State<TasksTab> {
   }
 }
 
-class _TasksData {
-  _TasksData({required this.tasks, required this.sessionByTaskId});
-  final List<AgentTask> tasks;
-  final Map<String, ChatSession> sessionByTaskId;
-}
 
 // ─── Shared ──────────────────────────────────────────────────────────────────
 

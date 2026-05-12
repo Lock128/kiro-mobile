@@ -6,6 +6,7 @@ class AuthCredentials {
     this.cookies = const {},
     this.csrfToken,
     this.bearerToken,
+    this.userId,
   });
 
   /// Primary auth token (JWT or session token).
@@ -17,11 +18,14 @@ class AuthCredentials {
   /// Cookies extracted from WebView after sign-in.
   final Map<String, String> cookies;
 
-  /// CSRF token for API requests.
+  /// CSRF token for API requests (x-csrf-token header).
   final String? csrfToken;
 
   /// Bearer token for API authorization header.
   final String? bearerToken;
+
+  /// User ID for the x-kiro-userid header.
+  final String? userId;
 
   /// Whether the credentials have expired.
   bool get isExpired =>
@@ -37,6 +41,7 @@ class AuthCredentials {
         'cookies': cookies,
         'csrfToken': csrfToken,
         'bearerToken': bearerToken,
+        'userId': userId,
       };
 
   /// Deserializes credentials from a JSON map.
@@ -49,5 +54,6 @@ class AuthCredentials {
         cookies: Map<String, String>.from(json['cookies'] as Map? ?? {}),
         csrfToken: json['csrfToken'] as String?,
         bearerToken: json['bearerToken'] as String?,
+        userId: json['userId'] as String?,
       );
 }

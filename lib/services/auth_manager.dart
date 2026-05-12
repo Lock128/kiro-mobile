@@ -93,6 +93,7 @@ class AuthManager extends ChangeNotifier {
   Future<void> handleWebSignInWithTokens({
     required String bearerToken,
     String? csrfToken,
+    String? userId,
   }) async {
     try {
       final credentials = AuthCredentials(
@@ -100,6 +101,7 @@ class AuthManager extends ChangeNotifier {
         cookies: const {},
         bearerToken: bearerToken,
         csrfToken: csrfToken,
+        userId: userId,
       );
 
       if (!credentials.isValid) {
@@ -177,6 +179,7 @@ class AuthManager extends ChangeNotifier {
     try {
       String? bearerToken;
       String? csrfToken;
+      String? userId;
 
       // ── 1. Extract CSRF token from the web app's custom event system ──
       try {
@@ -358,6 +361,63 @@ class AuthManager extends ChangeNotifier {
         DebugLog.log('extractCredentials: GetToken call failed: $e');
       }
 
+      // ── 2b. Extract userId via GetUserInfo ──
+      try {
+        DebugLog.log('extractCredentials: calling GetUserInfo endpoint');
+        await controller.runJavaScript('''
+          window._kiroUserInfoResult = null;
+          (async function() {
+            try {
+              var csrfToken = window._kiroCsrfResult || "";
+              var body = JSON.stringify({"origin": "KIRO_IDE"});
+              var resp = await fetch(
+                '/service/KiroWebPortalService/operation/GetUserInfo',
+                {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: {
+                    'accept': 'application/json',
+                    'content-type': 'application/json',
+                    'smithy-protocol': 'rpc-v2-cbor',
+                    'x-csrf-token': csrfToken
+                  },
+                  body: body
+                }
+              );
+              if (resp.ok) {
+                var data = await resp.json();
+                window._kiroUserInfoResult = data.userId || '';
+              } else {
+                window._kiroUserInfoResult = '';
+              }
+            } catch(e) {
+              window._kiroUserInfoResult = '';
+            }
+          })();
+        ''');
+
+        // Poll for the userId result.
+        for (var i = 0; i < 10; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          try {
+            final result = await controller.runJavaScriptReturningResult(
+              'window._kiroUserInfoResult || ""',
+            );
+            final raw = result.toString().replaceAll('"', '');
+            if (raw.isNotEmpty) {
+              userId = raw;
+              DebugLog.log('extractCredentials: got userId ($raw)');
+              break;
+            }
+          } catch (_) {}
+        }
+        if (userId == null) {
+          DebugLog.log('extractCredentials: userId not available via GetUserInfo');
+        }
+      } catch (e) {
+        DebugLog.log('extractCredentials: GetUserInfo call failed: $e');
+      }
+
       // ── 3. Read cookies via JS (may be empty on iOS for HttpOnly) ──
       final cookiesResult = await controller.runJavaScriptReturningResult(
         'document.cookie',
@@ -392,6 +452,7 @@ class AuthManager extends ChangeNotifier {
         cookies: cookies,
         bearerToken: bearerToken,
         csrfToken: csrfToken,
+        userId: userId,
       );
     } catch (e) {
       DebugLog.log('extractCredentials: caught exception: $e');

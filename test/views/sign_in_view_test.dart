@@ -53,6 +53,13 @@ class FakeAuthManager extends ChangeNotifier implements AuthManager {
 
   @override
   Future<void> handleWebSignInComplete() async {}
+
+  @override
+  Future<void> handleWebSignInWithTokens({
+    required String bearerToken,
+    String? csrfToken,
+    String? userId,
+  }) async {}
 }
 
 // ---------------------------------------------------------------------------

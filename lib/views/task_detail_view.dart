@@ -6,54 +6,45 @@ import 'package:provider/provider.dart';
 import '../services/auth_manager.dart';
 import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
-import 'content_formatter.dart';
-import 'formatted_content_view.dart';
 import 'message_input_bar.dart';
 
-/// Displays task details and its linked session conversation.
+/// Displays task (autonomous space) details and its linked session.
 class TaskDetailView extends StatefulWidget {
   const TaskDetailView({
     super.key,
     required this.api,
-    required this.task,
-    this.session,
+    required this.space,
+    required this.sessionId,
   });
 
   final KiroApi api;
-  final AgentTask task;
-  final ChatSession? session;
+  final Space space;
+  final String sessionId;
 
   @override
   State<TaskDetailView> createState() => _TaskDetailViewState();
 }
 
 class _TaskDetailViewState extends State<TaskDetailView> {
-  List<SessionMessage> _messages = [];
+  SessionResources? _resources;
   bool _loading = true;
   String? _error;
   Timer? _pollTimer;
   final _scrollController = ScrollController();
   bool _showScrollToBottom = false;
 
-  bool get _isActive {
-    final s = widget.task.status?.toUpperCase() ?? '';
-    return s != 'COMPLETED' && s != 'FAILED' && s != 'CANCELLED';
-  }
+  bool get _isActive => widget.space.status?.toUpperCase() == 'ACTIVE';
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    if (widget.session != null) {
-      _fetchHistory();
-      if (_isActive) {
-        _pollTimer = Timer.periodic(
-          const Duration(seconds: 5),
-          (_) => _fetchHistory(),
-        );
-      }
-    } else {
-      _loading = false;
+    _fetchResources();
+    if (_isActive) {
+      _pollTimer = Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => _fetchResources(),
+      );
     }
   }
 
@@ -73,30 +64,30 @@ class _TaskDetailViewState extends State<TaskDetailView> {
     );
   }
 
-  Future<void> _fetchHistory() async {
-    if (widget.session == null) return;
+  Future<void> _fetchResources() async {
     try {
-      final history = await widget.api.listSessionHistory(
-        sessionId: widget.session!.sessionId,
+      final resources = await widget.api.getSessionResources(
+        spaceId: widget.space.spaceId,
+        sessionId: widget.sessionId,
       );
       if (mounted) {
         setState(() {
-          _messages = history.activities.reversed.toList();
+          _resources = resources;
           _loading = false;
           _error = null;
         });
       }
     } on AuthExpiredException {
-      DebugLog.log('TaskDetailView: auth expired during fetchHistory');
+      DebugLog.log('TaskDetailView: auth expired during fetchResources');
       if (mounted) {
         context.read<AuthManager>().handleAuthError();
       }
     } catch (e) {
-      DebugLog.log('TaskDetailView: fetchHistory error: $e');
+      DebugLog.log('TaskDetailView: fetchResources error: $e');
       if (mounted && _loading) {
         setState(() {
           _loading = false;
-          _error = 'Failed to load conversation.';
+          _error = 'Failed to load session resources.';
         });
       }
     }
@@ -110,67 +101,37 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   }
 
   String _repoLabel() {
-    // Prefer providerResources directly on the task if available.
-    var res = widget.task.providerResources;
-    if (res == null || res.isEmpty) {
-      res = widget.session?.providerResources;
+    if (widget.space.githubRepo != null) {
+      final fullName = widget.space.githubRepo!['fullName'] as String?;
+      if (fullName != null && fullName.isNotEmpty) return fullName;
     }
+    final res = widget.space.providerResources;
     if (res == null || res.isEmpty) return '';
     if (res.length > 1) return '${res.length} repos';
-    final gh = res.first['github'] as Map<String, dynamic>?;
-    if (gh == null) return '';
-    final owner = gh['owner'] as String? ?? '';
-    final name = gh['name'] as String? ?? '';
-    if (owner.isNotEmpty && name.isNotEmpty) return '$owner/$name';
-    return name;
-  }
-
-  String _sourceLabel() {
-    final src = widget.task.sourceProvider;
-    if (src == null || src.isEmpty) return '';
-    if (src.contains('BIGWEAVER')) return 'Kiro';
-    return src;
+    return res.first['name'] as String? ?? '';
   }
 
   Widget _statusChip(ThemeData theme) {
-    final label = widget.task.status ?? 'unknown';
-    final isCompleted = label.toUpperCase() == 'COMPLETED';
-    final isInProgress =
-        label.toUpperCase() == 'IN_PROGRESS' || label.toUpperCase() == 'RUNNING';
+    final label = widget.space.status ?? 'unknown';
+    final isActive = label.toUpperCase() == 'ACTIVE';
     final Color color;
     final IconData icon;
-    if (isCompleted) {
+    if (isActive) {
       color = Colors.green;
       icon = Icons.check_circle_outline;
-    } else if (isInProgress) {
-      color = Colors.orange;
-      icon = Icons.autorenew;
     } else {
       color = theme.colorScheme.onSurfaceVariant;
       icon = Icons.circle_outlined;
     }
-    final display = label
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isEmpty
-            ? w
-            : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}')
-        .join(' ');
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 6),
-        Text(display,
+        Text(label,
             style: TextStyle(color: color, fontWeight: FontWeight.w600)),
       ],
     );
-  }
-
-  String _formatTime(DateTime dt) {
-    final h = dt.toLocal().hour.toString().padLeft(2, '0');
-    final m = dt.toLocal().minute.toString().padLeft(2, '0');
-    return '$h:$m';
   }
 
   String _formatDate(DateTime dt) {
@@ -186,9 +147,8 @@ class _TaskDetailViewState extends State<TaskDetailView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final task = widget.task;
+    final space = widget.space;
     final repo = _repoLabel();
-    final source = _sourceLabel();
 
     return Scaffold(
       appBar: AppBar(
@@ -210,7 +170,7 @@ class _TaskDetailViewState extends State<TaskDetailView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  task.name ?? task.title ?? 'Untitled Task',
+                  space.name,
                   style: theme.textTheme.titleMedium,
                 ),
                 const SizedBox(height: 12),
@@ -220,60 +180,53 @@ class _TaskDetailViewState extends State<TaskDetailView> {
                   children: [
                     _statusChip(theme),
                     if (repo.isNotEmpty)
-                      _InfoChip(
-                          icon: Icons.folder_outlined, label: repo),
-                    if (source.isNotEmpty)
-                      _InfoChip(
-                          icon: Icons.source_outlined, label: source),
-                    if (task.createdTime != null)
+                      _InfoChip(icon: Icons.folder_outlined, label: repo),
+                    if (space.createdAt != null)
                       _InfoChip(
                         icon: Icons.calendar_today_outlined,
-                        label: 'Created ${_formatDate(task.createdTime!)}',
+                        label: 'Created ${_formatDate(space.createdAt!)}',
                       ),
-                    if (task.lastUpdatedTime != null)
+                    if (space.updatedAt != null)
                       _InfoChip(
                         icon: Icons.update,
-                        label: 'Updated ${_formatDate(task.lastUpdatedTime!)}',
+                        label: 'Updated ${_formatDate(space.updatedAt!)}',
                       ),
                   ],
                 ),
               ],
             ),
           ),
-          // Conversation
-          Expanded(child: _buildConversation(theme)),
-          if (widget.session != null)
-            MessageInputBar(
-              hintText: 'Reply to this task…',
-              onSend: (message) async {
-                try {
-                  await widget.api.generateAgentSessionResponse(
-                    sessionId: widget.session!.sessionId,
-                    message: message,
-                  );
-                  _fetchHistory();
-                } on AuthExpiredException {
-                  if (mounted) {
-                    context.read<AuthManager>().handleAuthError();
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to send: $e')),
-                    );
-                  }
+          // Resources
+          Expanded(child: _buildContent(theme)),
+          MessageInputBar(
+            hintText: 'Reply to this task…',
+            onSend: (message) async {
+              try {
+                await widget.api.streamSendMessage(
+                  spaceId: widget.space.spaceId,
+                  sessionId: widget.sessionId,
+                  message: message,
+                );
+                _fetchResources();
+              } on AuthExpiredException {
+                if (mounted) {
+                  context.read<AuthManager>().handleAuthError();
                 }
-              },
-            ),
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to send: $e')),
+                  );
+                }
+              }
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildConversation(ThemeData theme) {
-    if (widget.session == null) {
-      return const Center(child: Text('No linked session found.'));
-    }
+  Widget _buildContent(ThemeData theme) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -287,7 +240,7 @@ class _TaskDetailViewState extends State<TaskDetailView> {
             ElevatedButton(
               onPressed: () {
                 setState(() => _loading = true);
-                _fetchHistory();
+                _fetchResources();
               },
               child: const Text('Retry'),
             ),
@@ -295,7 +248,7 @@ class _TaskDetailViewState extends State<TaskDetailView> {
         ),
       );
     }
-    if (_messages.isEmpty) {
+    if (_resources == null || _resources!.pullRequests.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -304,7 +257,7 @@ class _TaskDetailViewState extends State<TaskDetailView> {
             const SizedBox(height: 16),
             Text(_isActive
                 ? 'Waiting for agent response…'
-                : 'No conversation history.'),
+                : 'No resources yet.'),
           ],
         ),
       );
@@ -314,10 +267,10 @@ class _TaskDetailViewState extends State<TaskDetailView> {
         ListView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.all(16),
-          itemCount: _messages.length,
+          itemCount: _resources!.pullRequests.length,
           itemBuilder: (context, index) {
-            final msg = _messages[index];
-            return _MessageBubble(message: msg);
+            final pr = _resources!.pullRequests[index];
+            return _PullRequestTile(pr: pr);
           },
         ),
         if (_showScrollToBottom)
@@ -354,79 +307,43 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-  final SessionMessage message;
+class _PullRequestTile extends StatelessWidget {
+  const _PullRequestTile({required this.pr});
+  final PullRequest pr;
 
   @override
   Widget build(BuildContext context) {
-    final isUser = message.role == 'user';
     final theme = Theme.of(context);
-    final formatted = ContentFormatter.format(message.content);
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment:
-            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        children: [
-          if (!isUser)
-            Padding(
-              padding: const EdgeInsets.only(right: 8, top: 4),
-              child: Icon(
-                Icons.smart_toy_outlined,
-                size: 20,
-                color: theme.colorScheme.primary,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.merge, size: 18, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${pr.owner ?? ''}/${pr.repo ?? ''} #${pr.prId ?? ''}',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
-          Flexible(
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isUser
-                    ? theme.colorScheme.primaryContainer
-                    : theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
+            if (pr.state != null)
+              Text(
+                pr.state!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!isUser && message.agentName != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        message.agentName!,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.primary,
-                        ),
-                      ),
-                    ),
-                  FormattedContentView(content: formatted),
-                  if (message.timestamp != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        _formatTime(message.timestamp!),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          if (isUser) const SizedBox(width: 28),
-        ],
+          ],
+        ),
       ),
     );
-  }
-
-  static String _formatTime(DateTime dt) {
-    final h = dt.toLocal().hour.toString().padLeft(2, '0');
-    final m = dt.toLocal().minute.toString().padLeft(2, '0');
-    return '$h:$m';
   }
 }

@@ -6,19 +6,19 @@ import 'package:provider/provider.dart';
 import '../services/auth_manager.dart';
 import '../services/debug_log.dart';
 import '../services/kiro_api.dart';
-import 'content_formatter.dart';
-import 'formatted_content_view.dart';
 import 'message_input_bar.dart';
 
-/// Displays a session's message history, polling for updates.
+/// Displays a space session's message history, polling for updates.
 class SessionDetailView extends StatefulWidget {
   const SessionDetailView({
     super.key,
     required this.api,
+    required this.spaceId,
     required this.sessionId,
   });
 
   final KiroApi api;
+  final String spaceId;
   final String sessionId;
 
   @override
@@ -26,7 +26,7 @@ class SessionDetailView extends StatefulWidget {
 }
 
 class _SessionDetailViewState extends State<SessionDetailView> {
-  List<SessionMessage> _messages = [];
+  SessionResources? _resources;
   bool _loading = true;
   String? _error;
   Timer? _pollTimer;
@@ -37,11 +37,11 @@ class _SessionDetailViewState extends State<SessionDetailView> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _fetchHistory();
-    // Poll every 3 seconds for new messages.
+    _fetchResources();
+    // Poll every 3 seconds for updates.
     _pollTimer = Timer.periodic(
       const Duration(seconds: 3),
-      (_) => _fetchHistory(),
+      (_) => _fetchResources(),
     );
   }
 
@@ -61,30 +61,30 @@ class _SessionDetailViewState extends State<SessionDetailView> {
     );
   }
 
-  Future<void> _fetchHistory() async {
+  Future<void> _fetchResources() async {
     try {
-      final history = await widget.api.listSessionHistory(
+      final resources = await widget.api.getSessionResources(
+        spaceId: widget.spaceId,
         sessionId: widget.sessionId,
       );
       if (mounted) {
         setState(() {
-          // Activities contain the conversation messages.
-          _messages = history.activities.reversed.toList();
+          _resources = resources;
           _loading = false;
           _error = null;
         });
       }
     } on AuthExpiredException {
-      DebugLog.log('SessionDetailView: auth expired during fetchHistory');
+      DebugLog.log('SessionDetailView: auth expired during fetchResources');
       if (mounted) {
         context.read<AuthManager>().handleAuthError();
       }
     } catch (e) {
-      DebugLog.log('SessionDetailView: fetchHistory error: $e');
+      DebugLog.log('SessionDetailView: fetchResources error: $e');
       if (mounted && _loading) {
         setState(() {
           _loading = false;
-          _error = 'Failed to load session history.';
+          _error = 'Failed to load session resources.';
         });
       }
     }
@@ -102,7 +102,7 @@ class _SessionDetailViewState extends State<SessionDetailView> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Session',
+          'Space',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         bottom: PreferredSize(
@@ -110,7 +110,7 @@ class _SessionDetailViewState extends State<SessionDetailView> {
           child: Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Text(
-              widget.sessionId,
+              widget.spaceId,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -133,14 +133,14 @@ class _SessionDetailViewState extends State<SessionDetailView> {
                             ElevatedButton(
                               onPressed: () {
                                 setState(() => _loading = true);
-                                _fetchHistory();
+                                _fetchResources();
                               },
                               child: const Text('Retry'),
                             ),
                           ],
                         ),
                       )
-                    : _messages.isEmpty
+                    : _resources == null || _resources!.pullRequests.isEmpty
                         ? const Center(
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -156,10 +156,10 @@ class _SessionDetailViewState extends State<SessionDetailView> {
                               ListView.builder(
                                 controller: _scrollController,
                                 padding: const EdgeInsets.all(16),
-                                itemCount: _messages.length,
+                                itemCount: _resources!.pullRequests.length,
                                 itemBuilder: (context, index) {
-                                  final msg = _messages[index];
-                                  return _MessageBubble(message: msg);
+                                  final pr = _resources!.pullRequests[index];
+                                  return _PullRequestTile(pr: pr);
                                 },
                               ),
                               if (_showScrollToBottom)
@@ -176,14 +176,15 @@ class _SessionDetailViewState extends State<SessionDetailView> {
                           ),
           ),
           MessageInputBar(
-            hintText: 'Reply to this chat…',
+            hintText: 'Send a message…',
             onSend: (message) async {
               try {
-                await widget.api.generateAgentSessionResponse(
+                await widget.api.streamSendMessage(
+                  spaceId: widget.spaceId,
                   sessionId: widget.sessionId,
                   message: message,
                 );
-                _fetchHistory();
+                _fetchResources();
               } on AuthExpiredException {
                 if (mounted) {
                   context.read<AuthManager>().handleAuthError();
@@ -203,78 +204,51 @@ class _SessionDetailViewState extends State<SessionDetailView> {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-  final SessionMessage message;
+class _PullRequestTile extends StatelessWidget {
+  const _PullRequestTile({required this.pr});
+  final PullRequest pr;
 
   @override
   Widget build(BuildContext context) {
-    final isUser = message.role == 'user';
     final theme = Theme.of(context);
-    final formatted = ContentFormatter.format(message.content);
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment:
-            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        children: [
-          if (!isUser)
-            Padding(
-              padding: const EdgeInsets.only(right: 8, top: 4),
-              child: Icon(
-                Icons.smart_toy_outlined,
-                size: 20,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isUser
-                    ? theme.colorScheme.primaryContainer
-                    : theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!isUser && message.agentName != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        message.agentName!,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.primary,
-                        ),
-                      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.merge, size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${pr.owner ?? ''}/${pr.repo ?? ''} #${pr.prId ?? ''}',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.primary,
                     ),
-                  FormattedContentView(content: formatted),
-                  if (message.timestamp != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        _formatTime(message.timestamp!),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          if (isUser) const SizedBox(width: 28),
-        ],
+            if (pr.state != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  pr.state!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
-  }
-
-  static String _formatTime(DateTime dt) {
-    final h = dt.toLocal().hour.toString().padLeft(2, '0');
-    final m = dt.toLocal().minute.toString().padLeft(2, '0');
-    return '$h:$m';
   }
 }
